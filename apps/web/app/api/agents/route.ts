@@ -29,6 +29,17 @@ function isAgentStatus(value: unknown): value is AgentStatus {
   return value === "DRAFT" || value === "ACTIVE" || value === "ARCHIVED";
 }
 
+function isConnectedIntegration(integration: { status: string; encryptedSecret: string; metadata: unknown }) {
+  if (integration.status !== "ACTIVE") {
+    return false;
+  }
+  if (!integration.encryptedSecret) {
+    return false;
+  }
+  const metadata = integration.metadata as { lastTestOk?: boolean } | null;
+  return metadata?.lastTestOk === true;
+}
+
 function toNullableText(value: unknown) {
   if (typeof value !== "string") {
     return null;
@@ -96,15 +107,24 @@ export async function GET() {
     }),
     prisma.providerIntegration.findMany({
       where: { tenantId: auth.tenantId },
-      select: { id: true, provider: true, displayName: true, status: true },
+      select: { id: true, provider: true, displayName: true, status: true, encryptedSecret: true, metadata: true },
       orderBy: { createdAt: "asc" },
     }),
     buildModelOptions(auth.tenantId),
   ]);
 
+  const connectedIntegrations = integrations
+    .filter((integration: (typeof integrations)[number]) => isConnectedIntegration(integration))
+    .map((integration: (typeof integrations)[number]) => ({
+      id: integration.id,
+      provider: integration.provider,
+      displayName: integration.displayName,
+      status: integration.status,
+    }));
+
   return ok({
     agents,
-    integrations,
+    integrations: connectedIntegrations,
     modelOptions,
   });
 }
@@ -127,10 +147,13 @@ export async function POST(request: Request) {
   }
   const integration = await prisma.providerIntegration.findFirst({
     where: { id: providerIntegrationId, tenantId: auth.tenantId },
-    select: { id: true },
+    select: { id: true, status: true, encryptedSecret: true, metadata: true },
   });
   if (!integration) {
     return fail("Интеграция не найдена", "NOT_FOUND", 404);
+  }
+  if (!isConnectedIntegration(integration)) {
+    return fail("Интеграция не подключена. Сначала выполните успешный тест в разделе Интеграции AI.", "VALIDATION_ERROR", 400);
   }
 
   const model = typeof body.model === "string" ? body.model.trim() : "";

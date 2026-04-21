@@ -23,6 +23,17 @@ function isAgentStatus(value: unknown): value is AgentStatus {
   return value === "DRAFT" || value === "ACTIVE" || value === "ARCHIVED";
 }
 
+function isConnectedIntegration(integration: { status: string; encryptedSecret: string; metadata: unknown }) {
+  if (integration.status !== "ACTIVE") {
+    return false;
+  }
+  if (!integration.encryptedSecret) {
+    return false;
+  }
+  const metadata = integration.metadata as { lastTestOk?: boolean } | null;
+  return metadata?.lastTestOk === true;
+}
+
 function parseTemperature(value: unknown) {
   if (value === undefined || value === null || value === "") {
     return undefined;
@@ -90,10 +101,13 @@ export async function PUT(request: Request, context: Context) {
   if (typeof body.providerIntegrationId === "string") {
     const integration = await prisma.providerIntegration.findFirst({
       where: { id: body.providerIntegrationId, tenantId: auth.tenantId },
-      select: { id: true },
+      select: { id: true, status: true, encryptedSecret: true, metadata: true },
     });
     if (!integration) {
       return fail("Интеграция не найдена", "NOT_FOUND", 404);
+    }
+    if (!isConnectedIntegration(integration)) {
+      return fail("Интеграция не подключена. Сначала выполните успешный тест в разделе Интеграции AI.", "VALIDATION_ERROR", 400);
     }
     data.providerIntegrationId = integration.id;
   }
