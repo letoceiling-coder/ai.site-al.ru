@@ -4,14 +4,28 @@ import { getAuthContext } from "@/lib/auth-context";
 
 type CreatePayload = { name?: unknown; description?: unknown; visibility?: unknown };
 
-export async function GET() {
+export async function GET(request: Request) {
   const auth = await getAuthContext();
   if (!auth) {
     return fail("Unauthorized", "UNAUTHORIZED", 401);
   }
+  const { searchParams } = new URL(request.url);
+  const q = (searchParams.get("q") ?? "").trim();
   const rows = await prisma.knowledgeBase.findMany({
-    where: { tenantId: auth.tenantId, deletedAt: null },
+    where: {
+      tenantId: auth.tenantId,
+      deletedAt: null,
+      ...(q
+        ? {
+            OR: [
+              { name: { contains: q, mode: "insensitive" } },
+              { description: { contains: q, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+    },
     orderBy: { updatedAt: "desc" },
+    take: 200,
   });
   const items = await Promise.all(
     rows.map(async (row: (typeof rows)[number]) => {

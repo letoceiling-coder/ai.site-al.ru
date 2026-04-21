@@ -29,7 +29,13 @@ export async function GET(_: Request, context: Ctx) {
       status: true,
       createdAt: true,
       updatedAt: true,
-      document: { select: { id: true, parsingStatus: true } },
+      document: {
+        select: {
+          id: true,
+          parsingStatus: true,
+          _count: { select: { chunks: true } },
+        },
+      },
     },
   });
   return ok({ items });
