@@ -2,6 +2,10 @@ import { prisma } from "@ai/db";
 import { buildKnowledgeContextForBases } from "@/lib/knowledge-context";
 import { buildGroundedSystemPrompt } from "@/lib/knowledge-grounding";
 import { resolveMaxContextCharsForBases } from "@/lib/knowledge-settings";
+import {
+  buildPersonaDirectives,
+  extractAssistantSettings,
+} from "@/lib/assistant-settings";
 import { readFile } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import { decodeSecret } from "@/lib/integrations";
@@ -399,11 +403,10 @@ export async function buildAssistantReply(input: {
     kbIds.length > 0
       ? await buildKnowledgeContextForBases(input.tenantId, kbIds, input.userText, kbResolved.maxChars).catch(() => "")
       : "";
-  const systemForModel = buildGroundedSystemPrompt(
-    `You are agent "${agent.name}".`,
-    kbText,
-    kbResolved.grounding,
-  );
+  const persona = extractAssistantSettings(assistant.settingsJson);
+  const personaDirectives = buildPersonaDirectives(persona);
+  const basePrompt = `You are agent "${agent.name}".${personaDirectives ? `\n\n${personaDirectives}` : ""}`;
+  const systemForModel = buildGroundedSystemPrompt(basePrompt, kbText, kbResolved.grounding);
 
   let result: {
     text: string;
@@ -531,7 +534,10 @@ export async function buildAssistantReplyForUserAssistant(input: {
     input.userText,
     kbResolved.maxChars,
   ).catch(() => "");
-  const baseSystem = assistant.systemPrompt.trim() || "You are a helpful assistant.";
+  const persona = extractAssistantSettings(assistant.settingsJson);
+  const personaDirectives = buildPersonaDirectives(persona);
+  const baseSystemRaw = assistant.systemPrompt.trim() || "You are a helpful assistant.";
+  const baseSystem = personaDirectives ? `${baseSystemRaw}\n\n${personaDirectives}` : baseSystemRaw;
   const systemForModel = buildGroundedSystemPrompt(baseSystem, kbText, kbResolved.grounding);
 
   const preparedAttachments = await toAttachmentPayload(input.tenantId, input.attachments);

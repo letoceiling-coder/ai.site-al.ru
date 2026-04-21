@@ -3,10 +3,22 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AssistantTestChatPanel } from "@/components/assistant-test-chat-panel";
+import {
+  DEFAULT_ASSISTANT_SETTINGS,
+  type AssistantPersonaSettings,
+  type AssistantTemplate,
+} from "@/lib/assistant-settings";
 
 type IntegrationOption = { id: string; provider: string; displayName: string; status: string };
 type AgentOption = { id: string; name: string; model: string };
 type KnowledgeBaseOption = { id: string; name: string };
+type TemplateOption = {
+  id: AssistantTemplate;
+  title: string;
+  description: string;
+  systemPrompt: string;
+  persona: Partial<AssistantPersonaSettings>;
+};
 
 type AssistantRow = {
   id: string;
@@ -18,6 +30,7 @@ type AssistantRow = {
   createdAt: string;
   updatedAt: string;
   settingsJson: Record<string, unknown> | null;
+  persona?: AssistantPersonaSettings | null;
   providerIntegration: { id: string; provider: string; displayName: string; status: string };
   agent: { id: string; name: string; model: string; status: string } | null;
   knowledgeLinks: { knowledgeBaseId: string }[];
@@ -31,6 +44,7 @@ type ApiResponse = {
     modelOptions?: Record<string, string[]>;
     agents?: AgentOption[];
     knowledgeBases?: KnowledgeBaseOption[];
+    templates?: TemplateOption[];
   };
   error?: { message?: string };
 };
@@ -45,6 +59,8 @@ const emptyDraft = {
   model: "",
   status: "ACTIVE" as DraftStatus,
   knowledgeBaseIds: [] as string[],
+  template: "blank" as AssistantTemplate,
+  persona: { ...DEFAULT_ASSISTANT_SETTINGS } as AssistantPersonaSettings,
 };
 
 function normalizeModel(nextModel: string, models: string[]) {
@@ -82,12 +98,41 @@ function integrationLabel(assistant: AssistantRow) {
   return assistant.providerIntegration.displayName;
 }
 
+const TONE_LABEL: Record<AssistantPersonaSettings["tone"], string> = {
+  friendly: "дружелюбный",
+  formal: "формальный",
+  neutral: "нейтральный",
+  energetic: "энергичный",
+  empathic: "эмпатичный",
+};
+
+const LENGTH_LABEL: Record<AssistantPersonaSettings["length"], string> = {
+  short: "коротко",
+  normal: "средне",
+  detailed: "развёрнуто",
+};
+
+const LANGUAGE_LABEL: Record<AssistantPersonaSettings["language"], string> = {
+  auto: "как у собеседника",
+  ru: "русский",
+  en: "english",
+};
+
+function personaLabel(persona: AssistantPersonaSettings) {
+  const parts = [TONE_LABEL[persona.tone], LENGTH_LABEL[persona.length], LANGUAGE_LABEL[persona.language]];
+  if (persona.useEmoji) {
+    parts.push("эмодзи");
+  }
+  return parts.join(" · ");
+}
+
 export function AssistantsPageClient() {
   const [items, setItems] = useState<AssistantRow[]>([]);
   const [integrations, setIntegrations] = useState<IntegrationOption[]>([]);
   const [modelOptions, setModelOptions] = useState<Record<string, string[]>>({});
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseOption[]>([]);
+  const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [draft, setDraft] = useState(emptyDraft);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -96,6 +141,7 @@ export function AssistantsPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [viewTab, setViewTab] = useState<"manage" | "test">("manage");
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
+  const [personaOpen, setPersonaOpen] = useState(false);
 
   const selectedIntegration = useMemo(
     () => integrations.find((i) => i.id === draft.providerIntegrationId) ?? null,
@@ -125,6 +171,7 @@ export function AssistantsPageClient() {
     setModelOptions(body.data.modelOptions ?? {});
     setAgents(body.data.agents ?? []);
     setKnowledgeBases(body.data.knowledgeBases ?? []);
+    setTemplates(body.data.templates ?? []);
     setError(null);
     setLoading(false);
   }
@@ -157,6 +204,9 @@ export function AssistantsPageClient() {
         ? [...(modelOptions[intForModels.provider] ?? [])].sort((a, b) => a.localeCompare(b))
         : [];
       const modelStored = typeof s.model === "string" ? s.model : "";
+      const personaFromItem: AssistantPersonaSettings = item.persona
+        ? { ...DEFAULT_ASSISTANT_SETTINGS, ...item.persona }
+        : { ...DEFAULT_ASSISTANT_SETTINGS };
       setDraft({
         name: item.name,
         systemPrompt: item.systemPrompt,
@@ -165,7 +215,10 @@ export function AssistantsPageClient() {
         model: item.agentId ? "" : normalizeModel(modelStored, models) || (models[0] ?? ""),
         status: item.status,
         knowledgeBaseIds: item.knowledgeLinks.map((l) => l.knowledgeBaseId),
+        template: personaFromItem.template,
+        persona: personaFromItem,
       });
+      setPersonaOpen(true);
       return;
     }
     setDraft((prev) => {
@@ -184,6 +237,7 @@ export function AssistantsPageClient() {
 
   function resetForm() {
     setEditingId(null);
+    setPersonaOpen(false);
     const def = integrations[0]?.id ?? "";
     const pro = integrations[0]?.provider;
     const mlist = pro ? [...(modelOptions[pro] ?? [])].sort((a, b) => a.localeCompare(b)) : [];
@@ -191,6 +245,28 @@ export function AssistantsPageClient() {
       ...emptyDraft,
       providerIntegrationId: def,
       model: mlist[0] ?? "",
+      persona: { ...DEFAULT_ASSISTANT_SETTINGS },
+    });
+  }
+
+  function applyTemplate(id: AssistantTemplate) {
+    const tpl = templates.find((t) => t.id === id) ?? null;
+    setDraft((prev) => {
+      const prevTpl = templates.find((t) => t.id === prev.template);
+      const prevPrompt = prev.systemPrompt.trim();
+      const promptComesFromPrevTpl = prevTpl ? prevPrompt === prevTpl.systemPrompt.trim() : false;
+      const promptIsCustom = prevPrompt.length > 0 && !promptComesFromPrevTpl;
+      const nextPersona: AssistantPersonaSettings = {
+        ...DEFAULT_ASSISTANT_SETTINGS,
+        ...(tpl?.persona ?? {}),
+        template: id,
+      };
+      return {
+        ...prev,
+        template: id,
+        persona: nextPersona,
+        systemPrompt: promptIsCustom ? prev.systemPrompt : tpl?.systemPrompt ?? "",
+      };
     });
   }
 
@@ -231,6 +307,8 @@ export function AssistantsPageClient() {
       agentId: linked || null,
       status: draft.status,
       knowledgeBaseIds: draft.knowledgeBaseIds,
+      template: draft.template,
+      persona: draft.persona,
     };
     if (linked) {
       payload.providerIntegrationId = "";
@@ -373,6 +451,30 @@ export function AssistantsPageClient() {
               onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
               placeholder="Support Assistant"
             />
+
+            {templates.length > 0 ? (
+              <>
+                <label>Шаблон персоналии</label>
+                <p className="assistants-hint" style={{ marginTop: 0 }}>
+                  Готовые сценарии: автоматически подставляют промпт и стиль. Можно выбрать «Пустой» и написать свой.
+                </p>
+                <div className="assistant-templates">
+                  {templates.map((tpl) => (
+                    <button
+                      type="button"
+                      key={tpl.id}
+                      className={`assistant-template-card ${draft.template === tpl.id ? "assistant-template-card-active" : ""}`}
+                      onClick={() => applyTemplate(tpl.id)}
+                      title={tpl.description}
+                    >
+                      <strong>{tpl.title}</strong>
+                      <span>{tpl.description}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
+
             <label>Системный промпт</label>
             <textarea
               rows={4}
@@ -380,6 +482,104 @@ export function AssistantsPageClient() {
               onChange={(e) => setDraft((d) => ({ ...d, systemPrompt: e.target.value }))}
               placeholder="Роль, стиль ответа, ограничения"
             />
+
+            <div className="assistant-persona-head">
+              <button
+                type="button"
+                className="assistant-persona-toggle"
+                onClick={() => setPersonaOpen((v) => !v)}
+              >
+                {personaOpen ? "▼" : "▶"} Стиль ответов ассистента
+              </button>
+              <span className="assistant-persona-summary">
+                {personaLabel(draft.persona)}
+              </span>
+            </div>
+            {personaOpen ? (
+              <div className="assistant-persona-grid">
+                <label>
+                  Тон
+                  <select
+                    value={draft.persona.tone}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        persona: { ...d.persona, tone: e.target.value as AssistantPersonaSettings["tone"] },
+                      }))
+                    }
+                  >
+                    <option value="friendly">Дружелюбный</option>
+                    <option value="formal">Формальный</option>
+                    <option value="neutral">Нейтральный</option>
+                    <option value="energetic">Энергичный</option>
+                    <option value="empathic">Эмпатичный</option>
+                  </select>
+                </label>
+                <label>
+                  Длина ответа
+                  <select
+                    value={draft.persona.length}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        persona: { ...d.persona, length: e.target.value as AssistantPersonaSettings["length"] },
+                      }))
+                    }
+                  >
+                    <option value="short">Короткий (1–3 предложения)</option>
+                    <option value="normal">Средний</option>
+                    <option value="detailed">Развёрнутый (с примерами)</option>
+                  </select>
+                </label>
+                <label>
+                  Язык
+                  <select
+                    value={draft.persona.language}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        persona: {
+                          ...d.persona,
+                          language: e.target.value as AssistantPersonaSettings["language"],
+                        },
+                      }))
+                    }
+                  >
+                    <option value="auto">Как у собеседника</option>
+                    <option value="ru">Всегда русский</option>
+                    <option value="en">Всегда English</option>
+                  </select>
+                </label>
+                <label className="assistant-persona-check">
+                  <input
+                    type="checkbox"
+                    checked={draft.persona.useEmoji}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        persona: { ...d.persona, useEmoji: e.target.checked },
+                      }))
+                    }
+                  />
+                  Разрешить эмодзи
+                </label>
+                <label className="assistant-persona-role">
+                  Краткая роль (1 предложение)
+                  <input
+                    value={draft.persona.role}
+                    maxLength={240}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        persona: { ...d.persona, role: e.target.value },
+                      }))
+                    }
+                    placeholder="Например: Консультант ювелирного магазина"
+                  />
+                </label>
+              </div>
+            ) : null}
+
             <div className="assistants-routing">
               <label>Агент</label>
               <select

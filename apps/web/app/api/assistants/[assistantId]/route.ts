@@ -3,6 +3,7 @@ import { prisma } from "@ai/db";
 import { fail, ok } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
 import { isConnectedIntegration } from "@/lib/tenant-ai-integrations";
+import { mergeAssistantSettings } from "@/lib/assistant-settings";
 
 type Context = { params: Promise<{ assistantId: string }> };
 type AssistantStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
@@ -15,6 +16,7 @@ type UpdatePayload = {
   status?: unknown;
   knowledgeBaseIds?: unknown;
   model?: unknown;
+  persona?: unknown;
 };
 
 function isAssistantStatus(value: unknown): value is AssistantStatus {
@@ -189,6 +191,15 @@ export async function PUT(request: Request, context: Context) {
       delete cur.model;
     }
     data.settingsJson = cur;
+  }
+
+  if (body.persona !== undefined) {
+    const current = (data.settingsJson ?? currentSettings) as Record<string, unknown>;
+    const personaPayload =
+      body.persona && typeof body.persona === "object" && !Array.isArray(body.persona)
+        ? (body.persona as Record<string, unknown>)
+        : {};
+    data.settingsJson = mergeAssistantSettings(current, personaPayload);
   }
 
   const kbIds = parseKnowledgeBaseIds(body.knowledgeBaseIds);

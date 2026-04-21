@@ -2,6 +2,16 @@ import { prisma } from "@ai/db";
 import { fail, ok } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
 import { getConnectedIntegrationsWithModels, isConnectedIntegration } from "@/lib/tenant-ai-integrations";
+import {
+  ASSISTANT_TEMPLATES,
+  DEFAULT_ASSISTANT_SETTINGS,
+  extractAssistantSettings,
+  getAssistantTemplate,
+  mergeAssistantSettings,
+  normalizeAssistantSettings,
+  settingsFromTemplate,
+  type AssistantTemplate,
+} from "@/lib/assistant-settings";
 
 type AssistantStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
 
@@ -13,6 +23,8 @@ type CreatePayload = {
   status?: unknown;
   knowledgeBaseIds?: unknown;
   model?: unknown;
+  template?: unknown;
+  persona?: unknown;
 };
 
 function isAssistantStatus(value: unknown): value is AssistantStatus {
@@ -119,7 +131,19 @@ export async function GET() {
     }),
   ]);
 
-  return ok({ assistants, integrations: connectedIntegrations, modelOptions, agents, knowledgeBases });
+  const assistantsWithPersona = assistants.map((item: (typeof assistants)[number]) => ({
+    ...item,
+    persona: extractAssistantSettings(item.settingsJson),
+  }));
+
+  return ok({
+    assistants: assistantsWithPersona,
+    integrations: connectedIntegrations,
+    modelOptions,
+    agents,
+    knowledgeBases,
+    templates: ASSISTANT_TEMPLATES,
+  });
 }
 
 export async function POST(request: Request) {
@@ -133,7 +157,19 @@ export async function POST(request: Request) {
   if (!name) {
     return fail("Поле «Наименование» обязательно", "VALIDATION_ERROR", 400);
   }
-  const systemPrompt = typeof body.systemPrompt === "string" ? body.systemPrompt.trim() : "";
+
+  const rawTemplate = typeof body.template === "string" ? body.template.trim() : "";
+  const templateId: AssistantTemplate | null =
+    rawTemplate && ASSISTANT_TEMPLATES.some((tpl) => tpl.id === rawTemplate)
+      ? (rawTemplate as AssistantTemplate)
+      : null;
+
+  const userSystemPrompt = typeof body.systemPrompt === "string" ? body.systemPrompt.trim() : "";
+  const systemPrompt = userSystemPrompt
+    ? userSystemPrompt
+    : templateId
+      ? getAssistantTemplate(templateId).systemPrompt.trim()
+      : "";
   if (!systemPrompt) {
     return fail("Поле «Системный промпт» обязательно", "VALIDATION_ERROR", 400);
   }
@@ -188,7 +224,14 @@ export async function POST(request: Request) {
   }
 
   const modelFromBody = typeof body.model === "string" ? body.model.trim() : "";
-  const settingsJson: Record<string, unknown> = {};
+  const personaBase = templateId
+    ? settingsFromTemplate(templateId)
+    : { ...DEFAULT_ASSISTANT_SETTINGS };
+  const personaFromBody =
+    body.persona && typeof body.persona === "object" && !Array.isArray(body.persona)
+      ? normalizeAssistantSettings({ ...personaBase, ...(body.persona as Record<string, unknown>) })
+      : personaBase;
+  const settingsJson: Record<string, unknown> = mergeAssistantSettings({}, personaFromBody);
   if (resolved.useOpenRouter) {
     settingsJson.useOpenRouter = true;
   }

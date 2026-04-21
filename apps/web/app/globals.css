@@ -1358,6 +1358,122 @@ button:disabled {
   max-height: 120px;
 }
 
+.assistant-templates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+
+.assistant-template-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.assistant-template-card strong {
+  font-size: 13px;
+  color: #111827;
+}
+
+.assistant-template-card span {
+  font-size: 11.5px;
+  color: #6b7280;
+  line-height: 1.35;
+}
+
+.assistant-template-card:hover {
+  border-color: #a5b4fc;
+  background: #fafaff;
+}
+
+.assistant-template-card-active {
+  border-color: #4f46e5;
+  background: #eef2ff;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.12);
+}
+
+.assistant-template-card-active strong {
+  color: #3730a3;
+}
+
+.assistant-persona-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 0 6px;
+  padding: 8px 10px;
+  background: #f9fafb;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.assistant-persona-toggle {
+  background: transparent;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  cursor: pointer;
+  padding: 0;
+}
+
+.assistant-persona-summary {
+  font-size: 12px;
+  color: #6b7280;
+  text-align: right;
+  flex: 1 1 auto;
+}
+
+.assistant-persona-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 10px;
+  padding: 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.assistant-persona-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #374151;
+  margin: 0;
+}
+
+.assistant-persona-grid select,
+.assistant-persona-grid input[type="text"],
+.assistant-persona-grid input:not([type]) {
+  font-size: 13px;
+  padding: 6px 8px;
+}
+
+.assistant-persona-check {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px !important;
+}
+
+.assistant-persona-check input {
+  width: auto;
+}
+
+.assistant-persona-role {
+  grid-column: 1 / -1;
+}
+
 .agent-form--compact h3 {
   font-size: 15px;
   margin-bottom: 8px;
