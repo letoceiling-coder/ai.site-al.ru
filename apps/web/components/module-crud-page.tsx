@@ -100,11 +100,16 @@ export function ModuleCrudPage({ moduleKey, title, description }: ModuleCrudPage
 
   return (
     <section className="card">
-      <h1>{title}</h1>
+      <div className="module-title-row">
+        <span className="module-chip-icon" aria-hidden="true">
+          ◉
+        </span>
+        <h1>{title}</h1>
+      </div>
       <p>{description}</p>
       {error ? <p style={{ color: "crimson" }}>{error}</p> : null}
 
-      <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
+      <div className="module-crud-form">
         <input
           placeholder="Название"
           value={name}
@@ -126,8 +131,8 @@ export function ModuleCrudPage({ moduleKey, title, description }: ModuleCrudPage
       ) : items.length === 0 ? (
         <p>Пока нет данных</p>
       ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <div className="module-crud-table-wrap">
+          <table className="module-crud-table">
             <thead>
               <tr>
                 {columns.map((column) => (

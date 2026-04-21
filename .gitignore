@@ -12,4 +12,6 @@ pnpm-lock.yaml
 package-lock.json
 yarn.lock
 apps/web/.next
+**/tsconfig.tsbuildinfo
+cookies.txt
 packages/db/prisma/migrations

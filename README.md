@@ -20,6 +20,19 @@ Multi-tenant SaaS scaffold на React (Next.js) + Prisma + PostgreSQL.
 4. Запустить приложение:
    - `npm run dev`
 
+## E2E сценарии агентов
+- Тесты находятся в `apps/web/e2e/agents-chat.spec.ts`.
+- Установить браузеры Playwright:
+  - `npx playwright install`
+- Посмотреть список тестов:
+  - `npm run test:e2e -w apps/web -- --list`
+- Запуск:
+  - `npm run test:e2e -w apps/web`
+
+## Auth refresh flow
+- Добавлен endpoint `POST /api/auth/refresh` для перевыпуска `access_token` по `refresh_token`.
+- Middleware теперь проактивно обновляет `access_token`, если токен отсутствует или истекает.
+
 ## Документация
 - Контракты API: `docs/api/contracts.md`
 - IA админки: `docs/ui/information-architecture.md`

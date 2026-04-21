@@ -17,7 +17,10 @@ export function Sidebar() {
             href={item.href}
             className={`menu-item ${pathname === item.href ? "active" : ""}`}
           >
-            {item.title}
+            <span className="menu-item-icon" aria-hidden="true">
+              {item.icon}
+            </span>
+            <span className="menu-item-text">{item.title}</span>
           </Link>
         ))}
       </nav>

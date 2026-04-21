@@ -1,11 +1,16 @@
 // @ts-nocheck
-import { PrismaClient } from "@prisma/client";
+import { createRequire } from "node:module";
 
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
+const require = createRequire(import.meta.url);
+const prismaClientModule = require("@prisma/client");
+const PrismaClientCtor = prismaClientModule.PrismaClient;
+const Prisma = prismaClientModule.Prisma;
+
+const globalForPrisma = globalThis as unknown as { prisma?: InstanceType<typeof PrismaClientCtor> };
 
 export const prisma =
   globalForPrisma.prisma ??
-  new PrismaClient({
+  new PrismaClientCtor({
     log: ["warn", "error"],
   });
 
@@ -13,4 +18,5 @@ if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
 }
 
-export * from "@prisma/client";
+export const PrismaClient = PrismaClientCtor;
+export { Prisma };

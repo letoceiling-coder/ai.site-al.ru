@@ -1,4 +1,6 @@
 import { prisma } from "@ai/db";
+import { readFile } from "node:fs/promises";
+import { join, normalize } from "node:path";
 import { decodeSecret } from "@/lib/integrations";
 
 type AttachmentRef = {
@@ -11,6 +13,10 @@ type AttachmentRef = {
 type ParsedMessageContent = {
   text: string;
   attachments: AttachmentRef[];
+};
+
+type AttachmentPayload = AttachmentRef & {
+  inlineBase64?: string;
 };
 
 export function parseMessageContent(content: string): ParsedMessageContent {
@@ -50,7 +56,65 @@ function estimateTokens(text: string) {
   return Math.max(1, Math.ceil(text.length / 4));
 }
 
-async function completeWithOpenAi(apiKey: string, model: string, systemPrompt: string, userText: string) {
+async function toAttachmentPayload(
+  tenantId: string,
+  attachments: AttachmentRef[],
+): Promise<AttachmentPayload[]> {
+  const prepared: AttachmentPayload[] = [];
+  for (const file of attachments.slice(0, 10)) {
+    const next: AttachmentPayload = { ...file };
+    const isImage = file.mimeType.startsWith("image/");
+    const isTenantFile = file.url.startsWith(`/uploads/${tenantId}/`);
+    if (!isImage || !isTenantFile || file.size > 5 * 1024 * 1024) {
+      prepared.push(next);
+      continue;
+    }
+    try {
+      const normalized = normalize(file.url).replace(/\\/g, "/");
+      if (!normalized.startsWith(`/uploads/${tenantId}/`) || normalized.includes("..")) {
+        prepared.push(next);
+        continue;
+      }
+      const relativePath = normalized.replace(/^\/+/, "");
+      const absolute = join(process.cwd(), "public", relativePath);
+      const bytes = await readFile(absolute);
+      next.inlineBase64 = Buffer.from(bytes).toString("base64");
+    } catch {
+      // The file can still be referenced as metadata even if inline conversion failed.
+    }
+    prepared.push(next);
+  }
+  return prepared;
+}
+
+function buildAttachmentSummary(attachments: AttachmentPayload[]) {
+  if (attachments.length === 0) {
+    return "";
+  }
+  return attachments
+    .map((file, index) => `${index + 1}. ${file.name} (${file.mimeType}, ${file.size} bytes)`)
+    .join("\n");
+}
+
+async function completeWithOpenAi(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userText: string,
+  attachments: AttachmentPayload[],
+) {
+  const content: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [
+    { type: "text", text: userText },
+  ];
+  for (const file of attachments) {
+    if (!file.inlineBase64 || !file.mimeType.startsWith("image/")) {
+      continue;
+    }
+    content.push({
+      type: "image_url",
+      image_url: { url: `data:${file.mimeType};base64,${file.inlineBase64}` },
+    });
+  }
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -61,7 +125,7 @@ async function completeWithOpenAi(apiKey: string, model: string, systemPrompt: s
       model,
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: userText },
+        { role: "user", content },
       ],
       temperature: 0.7,
     }),
@@ -82,7 +146,30 @@ async function completeWithOpenAi(apiKey: string, model: string, systemPrompt: s
   };
 }
 
-async function completeWithAnthropic(apiKey: string, model: string, systemPrompt: string, userText: string) {
+async function completeWithAnthropic(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userText: string,
+  attachments: AttachmentPayload[],
+) {
+  const content: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+  > = [{ type: "text", text: userText }];
+  for (const file of attachments) {
+    if (!file.inlineBase64 || !file.mimeType.startsWith("image/")) {
+      continue;
+    }
+    content.push({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: file.mimeType,
+        data: file.inlineBase64,
+      },
+    });
+  }
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -94,7 +181,7 @@ async function completeWithAnthropic(apiKey: string, model: string, systemPrompt
       model,
       max_tokens: 1024,
       system: systemPrompt,
-      messages: [{ role: "user", content: userText }],
+      messages: [{ role: "user", content }],
     }),
   });
   if (!response.ok) {
@@ -116,7 +203,19 @@ async function completeWithAnthropic(apiKey: string, model: string, systemPrompt
   };
 }
 
-async function completeWithGemini(apiKey: string, model: string, userText: string) {
+async function completeWithGemini(apiKey: string, model: string, userText: string, attachments: AttachmentPayload[]) {
+  const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: userText }];
+  for (const file of attachments) {
+    if (!file.inlineBase64 || !file.mimeType.startsWith("image/")) {
+      continue;
+    }
+    parts.push({
+      inlineData: {
+        mimeType: file.mimeType,
+        data: file.inlineBase64,
+      },
+    });
+  }
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
@@ -126,7 +225,7 @@ async function completeWithGemini(apiKey: string, model: string, userText: strin
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: userText }] }],
+        contents: [{ role: "user", parts }],
       }),
     },
   );
@@ -146,7 +245,25 @@ async function completeWithGemini(apiKey: string, model: string, userText: strin
   };
 }
 
-async function completeWithOpenRouter(apiKey: string, model: string, systemPrompt: string, userText: string) {
+async function completeWithOpenRouter(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userText: string,
+  attachments: AttachmentPayload[],
+) {
+  const content: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [
+    { type: "text", text: userText },
+  ];
+  for (const file of attachments) {
+    if (!file.inlineBase64 || !file.mimeType.startsWith("image/")) {
+      continue;
+    }
+    content.push({
+      type: "image_url",
+      image_url: { url: `data:${file.mimeType};base64,${file.inlineBase64}` },
+    });
+  }
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -159,7 +276,7 @@ async function completeWithOpenRouter(apiKey: string, model: string, systemPromp
       model,
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: userText },
+        { role: "user", content },
       ],
       temperature: 0.7,
     }),
@@ -251,11 +368,11 @@ export async function buildAssistantReply(input: {
     openRouterEnabled && (agentConfig.useOpenRouter === true || openRouterConfig.autoRouting === true),
   );
 
+  const preparedAttachments = await toAttachmentPayload(input.tenantId, input.attachments);
+  const attachmentSummary = buildAttachmentSummary(preparedAttachments);
   const userTextWithAttachments =
     input.attachments.length > 0
-      ? `${input.userText}\n\nВложения:\n${input.attachments
-          .map((file, index) => `${index + 1}. ${file.name} (${file.mimeType}, ${file.size} bytes)`)
-          .join("\n")}`
+      ? `${input.userText}\n\nВложения:\n${attachmentSummary}`
       : input.userText;
 
   let result: {
@@ -272,17 +389,30 @@ export async function buildAssistantReply(input: {
       String(openRouterConfig.model || agent.model),
       `You are agent "${agent.name}".`,
       userTextWithAttachments,
+      preparedAttachments,
     );
   } else {
     switch (integration.provider) {
       case "OPENAI":
-        result = await completeWithOpenAi(directKey, agent.model, `You are agent "${agent.name}".`, userTextWithAttachments);
+        result = await completeWithOpenAi(
+          directKey,
+          agent.model,
+          `You are agent "${agent.name}".`,
+          userTextWithAttachments,
+          preparedAttachments,
+        );
         break;
       case "ANTHROPIC":
-        result = await completeWithAnthropic(directKey, agent.model, `You are agent "${agent.name}".`, userTextWithAttachments);
+        result = await completeWithAnthropic(
+          directKey,
+          agent.model,
+          `You are agent "${agent.name}".`,
+          userTextWithAttachments,
+          preparedAttachments,
+        );
         break;
       case "GEMINI":
-        result = await completeWithGemini(directKey, agent.model, userTextWithAttachments);
+        result = await completeWithGemini(directKey, agent.model, userTextWithAttachments, preparedAttachments);
         break;
       default:
         result = {
@@ -302,5 +432,110 @@ export async function buildAssistantReply(input: {
     outputTokens: result.outputTokens,
     providerForUsage: shouldUseOpenRouter ? "OPENAI" : integration.provider,
     modelForUsage: result.resolvedModel ?? (shouldUseOpenRouter ? String(openRouterConfig.model || agent.model) : agent.model),
+  };
+}
+
+/**
+ * Прямой тест-чат по сущности Assistant (страница «Ассистенты»), без агента как обязательного.
+ */
+export async function buildAssistantReplyForUserAssistant(input: {
+  tenantId: string;
+  assistantId: string;
+  userText: string;
+  attachments: AttachmentRef[];
+}) {
+  const record = await prisma.assistant.findFirst({
+    where: { id: input.assistantId, tenantId: input.tenantId, deletedAt: null },
+    include: {
+      providerIntegration: true,
+      agent: { include: { providerIntegration: true } },
+    },
+  });
+  if (!record) {
+    throw new Error("ASSISTANT_NOT_FOUND");
+  }
+  const assistant = record;
+
+  const aSettings = (assistant.settingsJson ?? {}) as {
+    useOpenRouter?: boolean;
+    model?: string;
+  };
+  const integration = assistant.providerIntegration;
+  const directKey = decodeSecret(integration.encryptedSecret);
+
+  const linkAgent = assistant.agent;
+  const resolvedModelFromAgent = linkAgent?.model?.trim() || "";
+  const resolvedModelFromSettings = typeof aSettings.model === "string" ? aSettings.model.trim() : "";
+
+  const settings = await prisma.systemSetting.findFirst({
+    where: { tenantId: input.tenantId, key: "openrouter" },
+  });
+  const openRouterConfig = (settings?.value ?? {}) as {
+    enabled?: boolean;
+    apiKey?: string;
+    model?: string;
+    autoRouting?: boolean;
+  };
+  const openRouterEnabled = Boolean(openRouterConfig.enabled && openRouterConfig.apiKey);
+  const shouldUseOpenRouter = Boolean(
+    openRouterEnabled &&
+      (aSettings.useOpenRouter === true || openRouterConfig.autoRouting === true),
+  );
+
+  const model = resolvedModelFromAgent || resolvedModelFromSettings || String(openRouterConfig.model || "gpt-4.1-mini");
+  const systemForModel = assistant.systemPrompt.trim() || "You are a helpful assistant.";
+
+  const preparedAttachments = await toAttachmentPayload(input.tenantId, input.attachments);
+  const attachmentSummary = buildAttachmentSummary(preparedAttachments);
+  const userTextWithAttachments =
+    input.attachments.length > 0
+      ? `${input.userText}\n\nВложения:\n${attachmentSummary}`
+      : input.userText;
+
+  let result: {
+    text: string;
+    inputTokens: number;
+    outputTokens: number;
+    route: "direct" | "openrouter";
+    resolvedModel?: string;
+  };
+
+  if (shouldUseOpenRouter) {
+    result = await completeWithOpenRouter(
+      String(openRouterConfig.apiKey),
+      String(openRouterConfig.model || model),
+      systemForModel,
+      userTextWithAttachments,
+      preparedAttachments,
+    );
+  } else {
+    switch (integration.provider) {
+      case "OPENAI":
+        result = await completeWithOpenAi(directKey, model, systemForModel, userTextWithAttachments, preparedAttachments);
+        break;
+      case "ANTHROPIC":
+        result = await completeWithAnthropic(directKey, model, systemForModel, userTextWithAttachments, preparedAttachments);
+        break;
+      case "GEMINI":
+        result = await completeWithGemini(directKey, model, userTextWithAttachments, preparedAttachments);
+        break;
+      default:
+        result = {
+          text: `Тестовый ответ (${integration.provider}) для ассистента «${assistant.name}»: ${input.userText}`,
+          inputTokens: estimateTokens(userTextWithAttachments),
+          outputTokens: estimateTokens(input.userText) + 12,
+          route: "direct" as const,
+        };
+    }
+  }
+
+  return {
+    assistant,
+    routeMode: result.route,
+    responseText: result.text,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    providerForUsage: shouldUseOpenRouter ? "OPENAI" : integration.provider,
+    modelForUsage: result.resolvedModel ?? (shouldUseOpenRouter ? String(openRouterConfig.model || model) : model),
   };
 }

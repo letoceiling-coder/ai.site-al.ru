@@ -1,11 +1,5 @@
-import { ModuleCrudPage } from "@/components/module-crud-page";
+import { AssistantsPageClient } from "@/components/assistants-page";
 
 export default function AssistantsPage() {
-  return (
-    <ModuleCrudPage
-      moduleKey="assistants"
-      title="Ассистенты"
-      description="Ассистенты и настройки доступны только владельцу tenant."
-    />
-  );
+  return <AssistantsPageClient />;
 }

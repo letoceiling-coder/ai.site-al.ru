@@ -623,7 +623,7 @@ export function AgentsPageClient() {
   }
 
   return (
-    <section className="card agents-crm">
+    <section className="card agents-crm" data-testid="agents-page">
       <div className="agents-crm-top">
         <div>
           <h1 style={{ marginBottom: 6 }}>Агенты</h1>
@@ -866,6 +866,7 @@ export function AgentsPageClient() {
                   type="button"
                   className="button-ghost"
                   disabled={!activeAgentId}
+                  data-testid="new-chat-session"
                   onClick={() => {
                     if (activeAgentId) {
                       void createSession(activeAgentId);
@@ -989,6 +990,7 @@ export function AgentsPageClient() {
                     <button
                       type="button"
                       className="telegram-icon-btn"
+                      data-testid="chat-attach-btn"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={uploadingFiles}
                       title="Прикрепить файлы"
@@ -996,6 +998,7 @@ export function AgentsPageClient() {
                       {"\ud83d\udcce"}
                     </button>
                     <textarea
+                      data-testid="chat-input"
                       rows={2}
                       value={chatInput}
                       onChange={(event) => setChatInput(event.target.value)}
@@ -1004,6 +1007,7 @@ export function AgentsPageClient() {
                     <button
                       type="button"
                       className={`telegram-icon-btn ${listening ? "telegram-icon-btn-active" : ""}`}
+                      data-testid="chat-voice-btn"
                       onClick={startVoiceInput}
                       title={listening ? "Остановить голосовой ввод" : "Голосовой ввод"}
                     >
@@ -1012,6 +1016,7 @@ export function AgentsPageClient() {
                     <button
                       type="button"
                       className="telegram-send-btn"
+                      data-testid="chat-send-btn"
                       disabled={chatLoading || !chatInput.trim()}
                       onClick={() => void sendMessage()}
                       title="Отправить"
@@ -1020,6 +1025,7 @@ export function AgentsPageClient() {
                     </button>
                     <input
                       ref={fileInputRef}
+                      data-testid="chat-file-input"
                       type="file"
                       multiple
                       hidden
@@ -1040,7 +1046,7 @@ export function AgentsPageClient() {
                   </p>
 
                   {chatFiles.length > 0 ? (
-                    <div className="chat-pending-files">
+                    <div className="chat-pending-files" data-testid="chat-pending-files">
                       {chatFiles.map((file) => (
                         <span key={file.url}>
                           <em className="chat-file-name" title={file.name}>
