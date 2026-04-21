@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AssistantTestChatPanel } from "@/components/assistant-test-chat-panel";
 
@@ -469,9 +470,15 @@ export function AssistantsPageClient() {
               <option value="ARCHIVED">Архив</option>
             </select>
             <label>Базы знаний</label>
+            <p className="assistants-kb-lead" style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 6px" }}>
+              <Link href="/knowledge" className="knowledge-link">
+                Управление базами
+              </Link>
+              — отметьте, какие наборы подставлять в контекст ответа.
+            </p>
             {knowledgeBases.length === 0 ? (
               <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 4px" }}>
-                Создайте базу в «База знаний», затем отметьте здесь.
+                Сначала создайте базу на странице «База знаний».
               </p>
             ) : (
               <div

@@ -454,6 +454,119 @@ button:disabled {
   align-self: start;
 }
 
+.knowledge-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 8px;
+  align-items: start;
+}
+
+.knowledge-link {
+  color: #2563eb;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(37, 99, 235, 0.35);
+}
+
+.knowledge-link:hover {
+  color: #1d4ed8;
+}
+
+.knowledge-bases-list {
+  display: grid;
+  gap: 6px;
+}
+
+.knowledge-base-pick {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.knowledge-base-pick > button[type="button"]:first-of-type {
+  flex: 1;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fff;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.knowledge-base-pick > button[type="button"]:first-of-type span {
+  display: block;
+  font-size: 14px;
+}
+
+.knowledge-base-pick > button[type="button"]:first-of-type small {
+  color: var(--muted);
+  font-size: 11px;
+  display: block;
+  margin-top: 2px;
+}
+
+.knowledge-base-pick-active {
+  border-color: #a5b4fc !important;
+  background: #eef2ff !important;
+}
+
+.knowledge-base-del {
+  min-width: 32px;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.knowledge-aside-pad {
+  margin: 0;
+  font-size: 13px;
+}
+
+.knowledge-main-empty {
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  padding: 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.knowledge-items-head {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.knowledge-item-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: #fff;
+}
+
+.knowledge-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.knowledge-item-meta {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.knowledge-item-content {
+  font-size: 13px;
+  line-height: 1.4;
+  color: #374151;
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+}
+
 .assistants-routing {
   border-top: 1px solid var(--line);
   margin-top: 8px;
@@ -1225,5 +1338,9 @@ button:disabled {
 
   .telegram-icon-btn:first-of-type {
     order: 2;
+  }
+
+  .knowledge-layout {
+    grid-template-columns: 1fr;
   }
 }

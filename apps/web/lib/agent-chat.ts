@@ -1,4 +1,5 @@
 import { prisma } from "@ai/db";
+import { buildKnowledgeContextForBases } from "@/lib/knowledge-context";
 import { readFile } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import { decodeSecret } from "@/lib/integrations";
@@ -449,6 +450,7 @@ export async function buildAssistantReplyForUserAssistant(input: {
     include: {
       providerIntegration: true,
       agent: { include: { providerIntegration: true } },
+      knowledgeLinks: { select: { knowledgeBaseId: true } },
     },
   });
   if (!record) {
@@ -483,7 +485,17 @@ export async function buildAssistantReplyForUserAssistant(input: {
   );
 
   const model = resolvedModelFromAgent || resolvedModelFromSettings || String(openRouterConfig.model || "gpt-4.1-mini");
-  const systemForModel = assistant.systemPrompt.trim() || "You are a helpful assistant.";
+  const kbIds = assistant.knowledgeLinks.map((l: { knowledgeBaseId: string }) => l.knowledgeBaseId);
+  const kbText = await buildKnowledgeContextForBases(
+    input.tenantId,
+    kbIds,
+    input.userText,
+  ).catch(() => "");
+  const baseSystem = assistant.systemPrompt.trim() || "You are a helpful assistant.";
+  const systemForModel =
+    kbText.length > 0
+      ? `${baseSystem}\n\n### Материалы из подключённых баз знаний (используй при ответе, если уместно):\n${kbText}`
+      : baseSystem;
 
   const preparedAttachments = await toAttachmentPayload(input.tenantId, input.attachments);
   const attachmentSummary = buildAttachmentSummary(preparedAttachments);
