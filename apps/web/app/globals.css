@@ -1,12 +1,16 @@
 :root {
-  --bg: #f8fafc;
+  --bg: #f5f6f8;
   --surface: #ffffff;
-  --text: #171717;
-  --muted: #6b7280;
-  --line: #e5e7eb;
+  --surface-soft: #fafafa;
+  --text: #18181b;
+  --muted: #71717a;
+  --line: #e4e4e7;
   --line-strong: #d4d4d8;
   --primary: #18181b;
   --primary-hover: #27272a;
+  --accent: #4f46e5;
+  --accent-soft: #eef2ff;
+  --danger: #dc2626;
   --radius: 14px;
 }
 
@@ -22,6 +26,12 @@ body {
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.01em;
 }
 
 a {
@@ -51,8 +61,8 @@ select {
 input:focus,
 textarea:focus,
 select:focus {
-  border-color: #a1a1aa;
-  box-shadow: 0 0 0 3px rgba(24, 24, 27, 0.12);
+  border-color: #a5b4fc;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.14);
 }
 
 button {
@@ -77,7 +87,7 @@ button:disabled {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 250px 1fr;
+  grid-template-columns: 244px 1fr;
   min-height: 100vh;
 }
 
@@ -85,12 +95,13 @@ button:disabled {
   border-right: 1px solid var(--line);
   padding: 16px 12px;
   background: var(--surface);
-  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.02);
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.03);
 }
 
 .sidebar h3 {
-  margin: 0;
-  font-size: 21px;
+  margin: 0 0 12px;
+  font-size: 19px;
+  font-weight: 700;
 }
 
 .menu-item {
@@ -98,28 +109,31 @@ button:disabled {
   padding: 9px 11px;
   border-radius: 10px;
   margin-bottom: 4px;
-  color: #404040;
+  color: #3f3f46;
+  font-size: 14px;
+  font-weight: 500;
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .menu-item:hover {
-  background: #f3f4f6;
+  background: #f4f4f5;
 }
 
 .menu-item.active {
   background: #18181b;
   color: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 .content {
-  padding: 20px;
+  padding: 18px 20px;
 }
 
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 30px rgba(15, 23, 42, 0.05);
   padding: 18px;
 }
 
@@ -168,9 +182,16 @@ button:disabled {
 
 .integration-card {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 14px;
   background: #fff;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.integration-card:hover {
+  border-color: #c7d2fe;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
 }
 
 .integration-card h3 {
@@ -186,8 +207,9 @@ button:disabled {
 }
 
 .integration-card-header a {
-  color: #4f46e5;
+  color: var(--accent);
   font-size: 12px;
+  font-weight: 500;
 }
 
 .integration-toggle {
@@ -195,7 +217,7 @@ button:disabled {
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
-  color: #374151;
+  color: #52525b;
   font-size: 13px;
 }
 
@@ -243,9 +265,10 @@ button:disabled {
 
 .agent-form {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: #fff;
   padding: 14px;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
 }
 
 .agent-form h3 {
@@ -287,7 +310,7 @@ button:disabled {
   z-index: 2;
   background: #fff;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 10px 12px;
   display: flex;
   justify-content: space-between;
@@ -301,12 +324,13 @@ button:disabled {
 
 .agent-item {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: #fff;
   padding: 10px 12px;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 10px;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
 }
 
 .agent-item p {
@@ -377,20 +401,21 @@ button:disabled {
 
 .button-ghost {
   background: #fff;
-  color: #111827;
+  color: #27272a;
+  border-color: #d4d4d8;
 }
 
 .button-ghost:hover {
-  background: #f3f4f6;
+  background: #f4f4f5;
 }
 
 .button-danger {
-  background: #991b1b;
-  border-color: #991b1b;
+  background: var(--danger);
+  border-color: var(--danger);
 }
 
 .button-danger:hover {
-  background: #7f1d1d;
+  background: #b91c1c;
 }
 
 @media (max-width: 1080px) {
@@ -408,9 +433,10 @@ button:disabled {
 
 .usage-summary-card {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: #fff;
   padding: 12px;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
 }
 
 .usage-summary-card small {
@@ -440,7 +466,8 @@ button:disabled {
   border-collapse: collapse;
   background: #fff;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .usage-table th,
@@ -450,6 +477,12 @@ button:disabled {
   padding: 10px;
   font-size: 13px;
   vertical-align: top;
+}
+
+.usage-table th {
+  background: #fafafa;
+  color: #3f3f46;
+  font-weight: 600;
 }
 
 .usage-table td small {
@@ -475,9 +508,10 @@ button:disabled {
 
 .usage-group-card {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: #fff;
   padding: 12px;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
 }
 
 .usage-group-card h3 {
@@ -615,6 +649,10 @@ button:disabled {
   font-size: 12px;
   color: #312e81;
   max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: inset 0 -1px 0 rgba(79, 70, 229, 0.08);
 }
 
 .chat-pending-files span::before {
@@ -638,6 +676,14 @@ button:disabled {
 
 .chat-pending-files span button:hover {
   background: #f5f5f5;
+  transform: none;
+}
+
+.chat-pending-files span button,
+.telegram-icon-btn,
+.telegram-send-btn,
+.chat-settings-btn {
+  transform: none;
 }
 
 @media (max-width: 1200px) {
@@ -665,7 +711,7 @@ button:disabled {
 }
 
 .agents-crm {
-  padding: 16px;
+  padding: 8px 2px 2px;
 }
 
 .agents-crm-top {
@@ -682,8 +728,8 @@ button:disabled {
 }
 
 .crm-tab-active {
-  border: 1px solid #111827;
-  background: #111827;
+  border: 1px solid var(--primary);
+  background: var(--primary);
   color: #fff;
 }
 
@@ -702,9 +748,10 @@ button:disabled {
 
 .crm-chat-panel {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: #fff;
   padding: 10px;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
 }
 
 .crm-panel-head {
@@ -725,11 +772,12 @@ button:disabled {
 .crm-agent-pick,
 .crm-session-pick {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: #fff;
   color: #111827;
   text-align: left;
   padding: 8px 10px;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .crm-agent-pick:hover,
@@ -751,15 +799,16 @@ button:disabled {
 
 .crm-agent-pick-active,
 .crm-session-pick-active {
-  border-color: #111827;
+  border-color: #a5b4fc;
   background: #eef2ff;
 }
 
 .crm-chat-main {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: #fff;
   padding: 12px;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
 }
 
 .crm-agent-badge {
@@ -784,15 +833,15 @@ button:disabled {
   height: 34px;
   padding: 0;
   border-radius: 999px;
-  background: #eef2ff;
-  border: 1px solid #c7d2fe;
-  color: #312e81;
+  background: #fff;
+  border: 1px solid #d4d4d8;
+  color: #3f3f46;
   font-size: 18px;
   line-height: 1;
 }
 
 .chat-settings-btn:hover {
-  background: #dbeafe;
+  background: #f4f4f5;
 }
 
 .chat-settings-popover {
@@ -811,7 +860,7 @@ button:disabled {
 }
 
 .telegram-chat-body {
-  background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
   padding: 14px;
 }
 
@@ -835,7 +884,7 @@ button:disabled {
 }
 
 .telegram-bubble.chat-user {
-  background: #dbeafe;
+  background: #e0e7ff;
 }
 
 .telegram-bubble.chat-assistant {
@@ -907,8 +956,8 @@ button:disabled {
   height: 42px;
   border-radius: 999px;
   padding: 0;
-  background: #4f46e5;
-  border-color: #4f46e5;
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .telegram-send-btn:hover {
