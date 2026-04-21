@@ -125,6 +125,7 @@ export function AgentsPageClient() {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedIntegration = useMemo(
@@ -557,6 +558,7 @@ export function AgentsPageClient() {
     setChatFiles([]);
     setChatInput("");
     setChatError(null);
+    setChatSettingsOpen(false);
     void loadSessions(activeAgentId);
   }, [activeAgentId]);
 
@@ -858,67 +860,82 @@ export function AgentsPageClient() {
               <>
                 <div className="agent-chat-header">
                   <h3 style={{ margin: 0 }}>Тест чат агента</h3>
-                  <div className="crm-agent-badge">
-                    {activeAgent.name} · {activeAgent.providerIntegration.displayName}
+                  <div className="chat-header-controls">
+                    <div className="crm-agent-badge">
+                      {activeAgent.name} · {activeAgent.providerIntegration.displayName}
+                    </div>
+                    <button
+                      type="button"
+                      className="chat-settings-btn"
+                      onClick={() => setChatSettingsOpen((prev) => !prev)}
+                      aria-label="Открыть настройки чата"
+                    >
+                      {"\u2699"}
+                    </button>
+                    {chatSettingsOpen ? (
+                      <div className="chat-settings-popover">
+                        <label className="integration-toggle">
+                          <input
+                            type="checkbox"
+                            checked={voiceEnabled}
+                            onChange={(event) => setVoiceEnabled(event.target.checked)}
+                          />
+                          Голосовой ответ
+                        </label>
+                        <select value={voiceBackend} onChange={(event) => setVoiceBackend(event.target.value as "browser" | "provider")}>
+                          <option value="browser">Voice backend: browser (по умолчанию)</option>
+                          <option value="provider">Voice backend: provider</option>
+                        </select>
+                        <select value={voiceGender} onChange={(event) => setVoiceGender(event.target.value as "female" | "male")}>
+                          <option value="female">Голос: женский</option>
+                          <option value="male">Голос: мужской</option>
+                        </select>
+                        <select
+                          value={voiceStyle}
+                          onChange={(event) => setVoiceStyle(event.target.value as "neutral" | "calm" | "energetic")}
+                        >
+                          <option value="neutral">Стиль: нейтральный</option>
+                          <option value="calm">Стиль: спокойный</option>
+                          <option value="energetic">Стиль: энергичный</option>
+                        </select>
+                        <button type="button" className="button-ghost" onClick={startVoiceInput}>
+                          {listening ? "Слушаю..." : "Голосовой ввод"}
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
                 <p style={{ marginTop: 8, color: "#6b7280" }}>Модель: {activeAgent.model}</p>
 
-                <div className="agent-voice-controls">
-                  <label className="integration-toggle">
-                    <input
-                      type="checkbox"
-                      checked={voiceEnabled}
-                      onChange={(event) => setVoiceEnabled(event.target.checked)}
-                    />
-                    Голосовой ответ
-                  </label>
-                  <select value={voiceBackend} onChange={(event) => setVoiceBackend(event.target.value as "browser" | "provider")}>
-                    <option value="browser">Voice backend: browser (по умолчанию)</option>
-                    <option value="provider">Voice backend: provider</option>
-                  </select>
-                  <select value={voiceGender} onChange={(event) => setVoiceGender(event.target.value as "female" | "male")}>
-                    <option value="female">Голос: женский</option>
-                    <option value="male">Голос: мужской</option>
-                  </select>
-                  <select
-                    value={voiceStyle}
-                    onChange={(event) => setVoiceStyle(event.target.value as "neutral" | "calm" | "energetic")}
-                  >
-                    <option value="neutral">Стиль: нейтральный</option>
-                    <option value="calm">Стиль: спокойный</option>
-                    <option value="energetic">Стиль: энергичный</option>
-                  </select>
-                  <button type="button" className="button-ghost" onClick={startVoiceInput}>
-                    {listening ? "Слушаю..." : "Голосовой ввод"}
-                  </button>
-                </div>
-
-                <div className="agent-chat-body">
+                <div className="agent-chat-body telegram-chat-body">
                   {chatMessages.length === 0 ? (
                     <p style={{ color: "#6b7280" }}>Сообщений пока нет. Начните новый тестовый диалог.</p>
                   ) : (
                     chatMessages.map((message) => (
-                      <div key={message.id} className={`chat-bubble ${message.role === "USER" ? "chat-user" : "chat-assistant"}`}>
-                        <strong>{message.role === "USER" ? "Вы" : "Агент"}</strong>
-                        <p>{message.text}</p>
-                        {message.attachments.length > 0 ? (
-                          <div className="chat-attachments">
-                            {message.attachments.map((file) => (
-                              <a key={`${message.id}-${file.url}`} href={file.url} target="_blank" rel="noreferrer">
-                                {file.name}
-                              </a>
-                            ))}
-                          </div>
-                        ) : null}
-                        <small>{asLocalDate(message.createdAt)}</small>
+                      <div
+                        key={message.id}
+                        className={`telegram-row ${message.role === "USER" ? "telegram-row-user" : "telegram-row-assistant"}`}
+                      >
+                        <div className={`chat-bubble telegram-bubble ${message.role === "USER" ? "chat-user" : "chat-assistant"}`}>
+                          <p>{message.text}</p>
+                          {message.attachments.length > 0 ? (
+                            <div className="chat-attachments">
+                              {message.attachments.map((file) => (
+                                <a key={`${message.id}-${file.url}`} href={file.url} target="_blank" rel="noreferrer">
+                                  {file.name}
+                                </a>
+                              ))}
+                            </div>
+                          ) : null}
+                          <small>{asLocalDate(message.createdAt)}</small>
+                        </div>
                       </div>
                     ))
                   )}
                   {chatLoading ? <p style={{ color: "#6b7280" }}>Агент печатает ответ...</p> : null}
                 </div>
 
-                <div className="agent-chat-input">
+                <div className="agent-chat-input telegram-composer">
                   <div
                     className={`chat-dropzone ${dragActive ? "chat-dropzone-active" : ""}`}
                     onDrop={handleDrop}
@@ -964,15 +981,15 @@ export function AgentsPageClient() {
                     </div>
                   ) : null}
 
-                  <textarea
-                    rows={3}
-                    value={chatInput}
-                    onChange={(event) => setChatInput(event.target.value)}
-                    placeholder="Введите сообщение для проверки агента..."
-                  />
-                  <div className="agent-chat-input-actions">
+                  <div className="telegram-composer-row">
+                    <textarea
+                      rows={2}
+                      value={chatInput}
+                      onChange={(event) => setChatInput(event.target.value)}
+                      placeholder="Введите сообщение для проверки агента..."
+                    />
                     <button type="button" disabled={chatLoading || !chatInput.trim()} onClick={() => void sendMessage()}>
-                      {chatLoading ? "Отправка..." : "Отправить"}
+                      {chatLoading ? "..." : "Отправить"}
                     </button>
                   </div>
                   {chatError ? <p style={{ color: "crimson" }}>{chatError}</p> : null}

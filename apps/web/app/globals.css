@@ -744,6 +744,100 @@ button:disabled {
   color: #374151;
 }
 
+.chat-header-controls {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-settings-btn {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  color: #312e81;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.chat-settings-btn:hover {
+  background: #dbeafe;
+}
+
+.chat-settings-popover {
+  position: absolute;
+  top: 40px;
+  right: 0;
+  width: 290px;
+  z-index: 20;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgba(17, 24, 39, 0.12);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.telegram-chat-body {
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+  padding: 14px;
+}
+
+.telegram-row {
+  display: flex;
+}
+
+.telegram-row-user {
+  justify-content: flex-end;
+}
+
+.telegram-row-assistant {
+  justify-content: flex-start;
+}
+
+.telegram-bubble {
+  max-width: min(80%, 720px);
+  border-radius: 14px;
+  border: none;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.1);
+}
+
+.telegram-bubble.chat-user {
+  background: #dbeafe;
+}
+
+.telegram-bubble.chat-assistant {
+  background: #fff;
+}
+
+.telegram-composer {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.telegram-composer-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.telegram-composer-row textarea {
+  min-height: 54px;
+  max-height: 140px;
+  resize: vertical;
+}
+
+.telegram-composer-row button {
+  height: 42px;
+  padding: 0 14px;
+}
+
 .chat-dropzone {
   border: 1px dashed #9ca3af;
   border-radius: 10px;
@@ -785,6 +879,20 @@ button:disabled {
   }
 
   .crm-chat-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-settings-popover {
+    left: 0;
+    right: auto;
+    width: min(290px, calc(100vw - 70px));
+  }
+
+  .telegram-bubble {
+    max-width: 92%;
+  }
+
+  .telegram-composer-row {
     grid-template-columns: 1fr;
   }
 }
