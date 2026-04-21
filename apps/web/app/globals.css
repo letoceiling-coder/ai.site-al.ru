@@ -88,14 +88,61 @@ button:disabled {
 .app-shell {
   display: grid;
   grid-template-columns: 244px 1fr;
+  align-items: start;
   min-height: 100vh;
 }
 
 .sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  max-height: 100vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-right: 1px solid var(--line);
   padding: 16px 12px;
   background: var(--surface);
   box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.03);
+  scrollbar-width: thin;
+  scrollbar-color: #d4d4d8 transparent;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background-color: #d4d4d8;
+  border-radius: 8px;
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background-color: #a1a1aa;
+}
+
+.content {
+  min-width: 0;
+  padding: 18px 20px;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
 }
 
 .sidebar h3 {
@@ -150,10 +197,6 @@ button:disabled {
 
 .menu-item-text {
   min-width: 0;
-}
-
-.content {
-  padding: 18px 20px;
 }
 
 .card {
