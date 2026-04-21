@@ -1,0 +1,15 @@
+[Unit]
+Description=ai.site-al.ru Next.js service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/ai.site-al.ru
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run start -w apps/web
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

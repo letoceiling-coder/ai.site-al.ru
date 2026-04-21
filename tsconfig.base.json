@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@ai/db": [
+        "packages/db/src/index.ts"
+      ],
+      "@ai/auth": [
+        "packages/auth/src/index.ts"
+      ],
+      "@ai/integrations": [
+        "packages/integrations/src/index.ts"
+      ],
+      "@ai/realtime": [
+        "packages/realtime/src/index.ts"
+      ],
+      "@ai/shared": [
+        "packages/shared/src/index.ts"
+      ]
+    }
+  }
+}

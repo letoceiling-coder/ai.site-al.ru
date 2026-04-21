@@ -1,0 +1,15 @@
+node_modules
+.next
+dist
+build
+.turbo
+.env
+.env.*
+!.env.example
+coverage
+*.log
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+apps/web/.next
+packages/db/prisma/migrations

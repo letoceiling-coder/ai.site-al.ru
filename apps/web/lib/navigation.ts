@@ -1,0 +1,15 @@
+export const adminMenu = [
+  { href: "/dashboard", title: "Дашборд" },
+  { href: "/integrations", title: "Интеграция AI" },
+  { href: "/agents", title: "Агенты" },
+  { href: "/knowledge", title: "База знаний" },
+  { href: "/assistants", title: "Ассистенты" },
+  { href: "/dialogs", title: "Диалоги" },
+  { href: "/api-keys", title: "API ключи" },
+  { href: "/leads", title: "Лиды" },
+  { href: "/telegram-bot", title: "Telegram Bot" },
+  { href: "/analytics", title: "Аналитика" },
+  { href: "/usage", title: "Usage" },
+  { href: "/settings", title: "Настройки" },
+  { href: "/avito", title: "Авито" },
+] as const;

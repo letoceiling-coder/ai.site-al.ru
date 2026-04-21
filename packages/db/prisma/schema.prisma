@@ -1,0 +1,647 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  BLOCKED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  PENDING
+  REVOKED
+}
+
+enum Visibility {
+  PRIVATE
+  INTERNAL
+}
+
+enum ApiKeyScope {
+  AGENTS
+  ASSISTANTS
+  KNOWLEDGE
+  DIALOGS
+}
+
+enum ProviderType {
+  OPENAI
+  ANTHROPIC
+  GEMINI
+  XAI
+  REPLICATE
+  ELEVENLABS
+}
+
+enum IntegrationStatus {
+  ACTIVE
+  DISABLED
+  ERROR
+}
+
+enum AgentStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum AssistantStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum DialogStatus {
+  OPEN
+  CLOSED
+  ARCHIVED
+}
+
+enum MessageRole {
+  SYSTEM
+  USER
+  ASSISTANT
+  TOOL
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum KnowledgeSourceType {
+  FILE
+  TEXT
+  URL
+}
+
+enum LeadStatus {
+  NEW
+  QUALIFIED
+  WON
+  LOST
+}
+
+enum TelegramBotStatus {
+  ACTIVE
+  PAUSED
+}
+
+enum AvitoWebhookStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
+model Tenant {
+  id                  String                @id @default(cuid())
+  slug                String                @unique
+  name                String
+  timezone            String                @default("UTC")
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  deletedAt           DateTime?
+  users               User[]                @relation("TenantUsers")
+  memberships         Membership[]
+  roles               Role[]
+  permissions         Permission[]
+  apiKeys             ApiKey[]
+  auditLogs           AuditLog[]
+  usageEvents         UsageEvent[]
+  providerIntegrations ProviderIntegration[]
+  modelCatalog        ModelCatalog[]
+  agents              Agent[]
+  assistants          Assistant[]
+  knowledgeBases      KnowledgeBase[]
+  dialogs             Dialog[]
+  leads               Lead[]
+  telegramBots        TelegramBot[]
+  avitoIntegrations   AvitoIntegration[]
+  analyticsSnapshots  AnalyticsSnapshot[]
+  systemSettings      SystemSetting[]
+
+  @@index([createdAt])
+}
+
+model User {
+  id             String       @id @default(cuid())
+  tenantId       String
+  email          String
+  passwordHash   String
+  displayName    String
+  status         UserStatus   @default(ACTIVE)
+  emailVerifiedAt DateTime?
+  lastLoginAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+  tenant         Tenant       @relation("TenantUsers", fields: [tenantId], references: [id], onDelete: Cascade)
+  memberships    Membership[]
+  createdAgents  Agent[]      @relation("AgentCreator")
+  createdAssistants Assistant[] @relation("AssistantCreator")
+  dialogs        Dialog[]
+  messages       Message[]
+  apiKeys        ApiKey[]     @relation("ApiKeyCreator")
+  auditLogs      AuditLog[]   @relation("AuditActor")
+  sessions       Session[]
+  passwordResets PasswordResetToken[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId, createdAt])
+}
+
+model Session {
+  id            String   @id @default(cuid())
+  tenantId      String
+  userId        String
+  refreshTokenHash String
+  ipAddress     String?
+  userAgent     String?
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, userId, createdAt])
+}
+
+model PasswordResetToken {
+  id          String   @id @default(cuid())
+  tenantId    String
+  userId      String
+  tokenHash   String   @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, userId])
+}
+
+model Membership {
+  id         String           @id @default(cuid())
+  tenantId   String
+  userId     String
+  roleId     String
+  status     MembershipStatus @default(ACTIVE)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role             @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId, roleId])
+  @@index([tenantId, status])
+}
+
+model Role {
+  id          String             @id @default(cuid())
+  tenantId    String
+  code        String
+  title       String
+  description String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  memberships Membership[]
+  grants      RolePermissionGrant[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, createdAt])
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  tenantId    String
+  module      String
+  action      String
+  title       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  grants      RolePermissionGrant[]
+
+  @@unique([tenantId, module, action])
+  @@index([tenantId, module])
+}
+
+model RolePermissionGrant {
+  id            String     @id @default(cuid())
+  tenantId      String
+  roleId        String
+  permissionId  String
+  createdAt     DateTime   @default(now())
+  role          Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission    Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, roleId, permissionId])
+  @@index([tenantId, createdAt])
+}
+
+model ApiKey {
+  id            String        @id @default(cuid())
+  tenantId      String
+  createdById   String
+  name          String
+  keyPrefix     String
+  keyHash       String        @unique
+  scope         ApiKeyScope
+  rateLimitRpm  Int           @default(60)
+  expiresAt     DateTime?
+  lastUsedAt    DateTime?
+  revokedAt     DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy     User          @relation("ApiKeyCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, scope, createdAt])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  tenantId    String
+  actorId     String?
+  entityType  String
+  entityId    String
+  action      String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actor       User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, entityType, entityId])
+  @@index([tenantId, createdAt])
+}
+
+model UsageEvent {
+  id             String   @id @default(cuid())
+  tenantId       String
+  provider       ProviderType
+  model          String
+  tokensInput    Int      @default(0)
+  tokensOutput   Int      @default(0)
+  totalCostUsd   Decimal  @db.Decimal(12, 6)
+  sourceType     String
+  sourceId       String?
+  createdAt      DateTime @default(now())
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, provider, createdAt])
+}
+
+model ProviderIntegration {
+  id              String            @id @default(cuid())
+  tenantId        String
+  provider        ProviderType
+  displayName     String
+  encryptedSecret String
+  metadata        Json?
+  status          IntegrationStatus @default(ACTIVE)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  agents          Agent[]
+  assistants      Assistant[]
+
+  @@unique([tenantId, provider, displayName])
+  @@index([tenantId, status, createdAt])
+}
+
+model ModelCatalog {
+  id              String       @id @default(cuid())
+  tenantId        String
+  provider        ProviderType
+  modelCode       String
+  contextWindow   Int?
+  supportsVision  Boolean      @default(false)
+  supportsAudio   Boolean      @default(false)
+  supportsTools   Boolean      @default(false)
+  inputPriceUsd   Decimal?     @db.Decimal(12, 6)
+  outputPriceUsd  Decimal?     @db.Decimal(12, 6)
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, provider, modelCode])
+  @@index([tenantId, provider, isActive])
+}
+
+model Agent {
+  id                    String              @id @default(cuid())
+  tenantId              String
+  createdById           String
+  providerIntegrationId String
+  name                  String
+  description           String?
+  model                 String
+  temperature           Float               @default(0.7)
+  maxTokens             Int?
+  status                AgentStatus         @default(DRAFT)
+  configJson            Json?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  deletedAt             DateTime?
+  tenant                Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy             User                @relation("AgentCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  providerIntegration   ProviderIntegration @relation(fields: [providerIntegrationId], references: [id], onDelete: Restrict)
+  assistants            Assistant[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status, createdAt])
+}
+
+model Assistant {
+  id                    String              @id @default(cuid())
+  tenantId              String
+  createdById           String
+  providerIntegrationId String
+  agentId               String?
+  name                  String
+  systemPrompt          String
+  status                AssistantStatus     @default(DRAFT)
+  version               Int                 @default(1)
+  settingsJson          Json?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  deletedAt             DateTime?
+  tenant                Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy             User                @relation("AssistantCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  providerIntegration   ProviderIntegration @relation(fields: [providerIntegrationId], references: [id], onDelete: Restrict)
+  agent                 Agent?              @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  knowledgeLinks        AssistantKnowledgeBase[]
+  dialogs               Dialog[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status, createdAt])
+}
+
+model KnowledgeBase {
+  id          String                 @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  visibility  Visibility             @default(PRIVATE)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  deletedAt   DateTime?
+  tenant      Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items       KnowledgeItem[]
+  assistants  AssistantKnowledgeBase[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, createdAt])
+}
+
+model KnowledgeItem {
+  id              String              @id @default(cuid())
+  tenantId        String
+  knowledgeBaseId String
+  sourceType      KnowledgeSourceType
+  title           String
+  content         String?
+  sourceUrl       String?
+  status          JobStatus           @default(QUEUED)
+  metadata        Json?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  knowledgeBase   KnowledgeBase       @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  document        Document?
+  sourceLinks     SourceLink[]
+
+  @@index([tenantId, knowledgeBaseId, createdAt])
+}
+
+model Document {
+  id                String       @id @default(cuid())
+  tenantId          String
+  knowledgeItemId   String       @unique
+  objectKey         String
+  mimeType          String
+  fileSize          Int
+  parsingStatus     JobStatus    @default(QUEUED)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  knowledgeItem     KnowledgeItem @relation(fields: [knowledgeItemId], references: [id], onDelete: Cascade)
+  chunks            Chunk[]
+  embeddingJobs     EmbeddingJob[]
+
+  @@index([tenantId, createdAt])
+}
+
+model Chunk {
+  id           String   @id @default(cuid())
+  tenantId     String
+  documentId   String
+  idx          Int
+  content      String
+  tokenCount   Int
+  embeddingRef String?
+  createdAt    DateTime @default(now())
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, idx])
+  @@index([tenantId, createdAt])
+}
+
+model EmbeddingJob {
+  id          String    @id @default(cuid())
+  tenantId    String
+  documentId  String
+  provider    ProviderType
+  model       String
+  status      JobStatus @default(QUEUED)
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  errorText   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status, createdAt])
+}
+
+model SourceLink {
+  id              String       @id @default(cuid())
+  tenantId        String
+  knowledgeItemId String
+  url             String
+  fetchedAt       DateTime?
+  contentHash     String?
+  createdAt       DateTime     @default(now())
+  knowledgeItem   KnowledgeItem @relation(fields: [knowledgeItemId], references: [id], onDelete: Cascade)
+
+  @@unique([knowledgeItemId, url])
+  @@index([tenantId, createdAt])
+}
+
+model AssistantKnowledgeBase {
+  id              String       @id @default(cuid())
+  tenantId        String
+  assistantId     String
+  knowledgeBaseId String
+  createdAt       DateTime     @default(now())
+  assistant       Assistant    @relation(fields: [assistantId], references: [id], onDelete: Cascade)
+  knowledgeBase   KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, assistantId, knowledgeBaseId])
+  @@index([tenantId, createdAt])
+}
+
+model Dialog {
+  id            String       @id @default(cuid())
+  tenantId      String
+  userId        String
+  assistantId   String
+  externalRef   String?
+  status        DialogStatus @default(OPEN)
+  metadata      Json?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  closedAt      DateTime?
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user          User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  assistant     Assistant    @relation(fields: [assistantId], references: [id], onDelete: Restrict)
+  messages      Message[]
+
+  @@index([tenantId, status, createdAt])
+}
+
+model Message {
+  id            String      @id @default(cuid())
+  tenantId      String
+  dialogId      String
+  userId        String?
+  role          MessageRole
+  content       String
+  tokenCount    Int?
+  provider      ProviderType?
+  model         String?
+  createdAt     DateTime    @default(now())
+  dialog        Dialog      @relation(fields: [dialogId], references: [id], onDelete: Cascade)
+  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  toolCalls     ToolCall[]
+
+  @@index([tenantId, dialogId, createdAt])
+}
+
+model ToolCall {
+  id           String   @id @default(cuid())
+  tenantId     String
+  messageId    String
+  toolName     String
+  status       JobStatus @default(QUEUED)
+  inputJson    Json
+  outputJson   Json?
+  createdAt    DateTime @default(now())
+  message      Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, toolName, createdAt])
+}
+
+model Lead {
+  id            String     @id @default(cuid())
+  tenantId      String
+  fullName      String
+  phone         String?
+  email         String?
+  source        String
+  status        LeadStatus @default(NEW)
+  payload       Json?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  tenant        Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status, createdAt])
+}
+
+model TelegramBot {
+  id             String            @id @default(cuid())
+  tenantId       String
+  name           String
+  botTokenEnc    String
+  webhookUrl     String?
+  status         TelegramBotStatus @default(ACTIVE)
+  configJson     Json?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  tenant         Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status, createdAt])
+}
+
+model AvitoIntegration {
+  id               String      @id @default(cuid())
+  tenantId         String
+  name             String
+  clientId         String
+  clientSecretEnc  String
+  accessTokenEnc   String?
+  refreshTokenEnc  String?
+  webhookUrl       String?
+  isActive         Boolean     @default(true)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  tenant           Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  webhookEvents    AvitoWebhookEvent[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, isActive, createdAt])
+}
+
+model AvitoWebhookEvent {
+  id                 String             @id @default(cuid())
+  tenantId           String
+  avitoIntegrationId String
+  eventType          String
+  payload            Json
+  status             AvitoWebhookStatus @default(RECEIVED)
+  errorText          String?
+  createdAt          DateTime           @default(now())
+  avitoIntegration   AvitoIntegration   @relation(fields: [avitoIntegrationId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status, createdAt])
+}
+
+model AnalyticsSnapshot {
+  id             String   @id @default(cuid())
+  tenantId       String
+  snapshotDate   DateTime
+  activeUsers    Int      @default(0)
+  totalDialogs   Int      @default(0)
+  totalLeads     Int      @default(0)
+  tokensInput    Int      @default(0)
+  tokensOutput   Int      @default(0)
+  totalCostUsd   Decimal  @default(0) @db.Decimal(12, 6)
+  metadata       Json?
+  createdAt      DateTime @default(now())
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, snapshotDate])
+  @@index([tenantId, createdAt])
+}
+
+model SystemSetting {
+  id          String   @id @default(cuid())
+  tenantId    String
+  key         String
+  value       Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([tenantId, updatedAt])
+}
