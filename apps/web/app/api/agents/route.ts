@@ -145,7 +145,7 @@ export async function GET() {
     }),
   ]);
 
-  const connectedIntegrations = integrations
+  const connectedIntegrations: Array<{ id: string; provider: string; displayName: string; status: string }> = integrations
     .filter((integration: (typeof integrations)[number]) => isConnectedIntegration(integration))
     .map((integration: (typeof integrations)[number]) => ({
       id: integration.id,
