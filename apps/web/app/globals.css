@@ -886,6 +886,25 @@ button:disabled {
   color: var(--muted);
 }
 
+.telegram-voice-state {
+  margin: 4px 2px 0;
+  font-size: 12px;
+}
+
+.telegram-voice-state.voice-idle {
+  color: #6b7280;
+}
+
+.telegram-voice-state.voice-listening {
+  color: #166534;
+  font-weight: 600;
+}
+
+.telegram-voice-state.voice-error,
+.telegram-voice-state.voice-unsupported {
+  color: #b91c1c;
+}
+
 .chat-dropzone {
   border: 1px dashed #9ca3af;
   border-radius: 10px;

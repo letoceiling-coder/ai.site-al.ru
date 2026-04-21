@@ -126,7 +126,9 @@ export function AgentsPageClient() {
   const [dragActive, setDragActive] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
+  const [voiceState, setVoiceState] = useState<"idle" | "listening" | "error" | "unsupported">("idle");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const recognitionRef = useRef<any>(null);
 
   const selectedIntegration = useMemo(
     () => integrations.find((integration) => integration.id === draft.providerIntegrationId) ?? null,
@@ -420,15 +422,38 @@ export function AgentsPageClient() {
     const Recognition = AnyWindow.SpeechRecognition ?? AnyWindow.webkitSpeechRecognition;
     if (!Recognition) {
       setChatError("Голосовой ввод недоступен в этом браузере");
+      setVoiceState("unsupported");
+      return;
+    }
+    if (listening && recognitionRef.current) {
+      recognitionRef.current.stop();
+      setListening(false);
+      setVoiceState("idle");
       return;
     }
     const recognition = new Recognition();
+    let hadError = false;
+    recognitionRef.current = recognition;
     recognition.lang = "ru-RU";
     recognition.interimResults = true;
     recognition.continuous = false;
-    recognition.onstart = () => setListening(true);
-    recognition.onerror = () => setListening(false);
-    recognition.onend = () => setListening(false);
+    recognition.onstart = () => {
+      setListening(true);
+      setVoiceState("listening");
+      setChatError(null);
+    };
+    recognition.onerror = () => {
+      hadError = true;
+      setListening(false);
+      setVoiceState("error");
+    };
+    recognition.onend = () => {
+      setListening(false);
+      if (!hadError) {
+        setVoiceState("idle");
+      }
+      recognitionRef.current = null;
+    };
     recognition.onresult = (event: any) => {
       const text = Array.from(event.results)
         .map((result: any) => String(result[0]?.transcript ?? ""))
@@ -559,6 +584,15 @@ export function AgentsPageClient() {
     setChatInput("");
     setChatError(null);
     setChatSettingsOpen(false);
+    setVoiceState("idle");
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore stop errors when recognition is already idle
+      }
+      recognitionRef.current = null;
+    }
     void loadSessions(activeAgentId);
   }, [activeAgentId]);
 
@@ -962,9 +996,9 @@ export function AgentsPageClient() {
                       type="button"
                       className={`telegram-icon-btn ${listening ? "telegram-icon-btn-active" : ""}`}
                       onClick={startVoiceInput}
-                      title="Голосовой ввод"
+                      title={listening ? "Остановить голосовой ввод" : "Голосовой ввод"}
                     >
-                      {"\ud83c\udfa4"}
+                      {listening ? "\u25a0" : "\ud83c\udfa4"}
                     </button>
                     <button
                       type="button"
@@ -988,6 +1022,12 @@ export function AgentsPageClient() {
                   </div>
                   <p className="telegram-drop-hint">
                     {dragActive ? "Отпустите файлы для загрузки" : "Перетащите файлы в поле ввода или нажмите скрепку"}
+                  </p>
+                  <p className={`telegram-voice-state voice-${voiceState}`}>
+                    {voiceState === "listening" ? "Голосовой ввод активен: слушаю..." : null}
+                    {voiceState === "idle" ? "Голосовой ввод выключен" : null}
+                    {voiceState === "unsupported" ? "Голосовой ввод не поддерживается браузером" : null}
+                    {voiceState === "error" ? "Ошибка голосового ввода, попробуйте снова" : null}
                   </p>
 
                   {chatFiles.length > 0 ? (
