@@ -1,13 +1,13 @@
 :root {
-  --bg: #f6f7fb;
+  --bg: #f8fafc;
   --surface: #ffffff;
-  --text: #111827;
+  --text: #171717;
   --muted: #6b7280;
   --line: #e5e7eb;
-  --line-strong: #d1d5db;
-  --primary: #111827;
-  --primary-hover: #1f2937;
-  --radius: 12px;
+  --line-strong: #d4d4d8;
+  --primary: #18181b;
+  --primary-hover: #27272a;
+  --radius: 14px;
 }
 
 * {
@@ -41,7 +41,7 @@ textarea,
 select {
   width: 100%;
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 10px 12px;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -51,22 +51,23 @@ select {
 input:focus,
 textarea:focus,
 select:focus {
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+  border-color: #a1a1aa;
+  box-shadow: 0 0 0 3px rgba(24, 24, 27, 0.12);
 }
 
 button {
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 10px 14px;
   background: var(--primary);
   color: #fff;
   cursor: pointer;
-  transition: background-color 0.2s ease, opacity 0.2s ease;
+  transition: background-color 0.2s ease, opacity 0.2s ease, transform 0.15s ease;
 }
 
 button:hover {
   background: var(--primary-hover);
+  transform: translateY(-1px);
 }
 
 button:disabled {
@@ -84,6 +85,7 @@ button:disabled {
   border-right: 1px solid var(--line);
   padding: 16px 12px;
   background: var(--surface);
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.02);
 }
 
 .sidebar h3 {
@@ -93,10 +95,10 @@ button:disabled {
 
 .menu-item {
   display: block;
-  padding: 9px 10px;
-  border-radius: 8px;
+  padding: 9px 11px;
+  border-radius: 10px;
   margin-bottom: 4px;
-  color: #374151;
+  color: #404040;
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
@@ -105,7 +107,7 @@ button:disabled {
 }
 
 .menu-item.active {
-  background: #111827;
+  background: #18181b;
   color: #fff;
 }
 
@@ -117,7 +119,7 @@ button:disabled {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(15, 23, 42, 0.04);
   padding: 18px;
 }
 
@@ -605,12 +607,37 @@ button:disabled {
 .chat-pending-files span {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  border: 1px solid var(--line);
+  gap: 6px;
+  border: 1px solid #c7d2fe;
   border-radius: 999px;
-  padding: 4px 8px;
-  background: #fff;
+  padding: 4px 8px 4px 7px;
+  background: #eef2ff;
   font-size: 12px;
+  color: #312e81;
+  max-width: 260px;
+}
+
+.chat-pending-files span::before {
+  content: "\1F4CE";
+  font-size: 12px;
+  line-height: 1;
+}
+
+.chat-pending-files span button {
+  border: 1px solid #d4d4d8;
+  background: #fff;
+  color: #52525b;
+  border-radius: 999px;
+  min-width: 20px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.chat-pending-files span button:hover {
+  background: #f5f5f5;
 }
 
 @media (max-width: 1200px) {
@@ -825,10 +852,11 @@ button:disabled {
   grid-template-columns: auto 1fr auto auto;
   gap: 8px;
   align-items: end;
-  border: 1px solid var(--line-strong);
+  border: 1px solid #d4d4d8;
   border-radius: 12px;
   padding: 8px;
-  background: #fff;
+  background: #fafafa;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 }
 
 .telegram-input-shell textarea {
@@ -846,8 +874,9 @@ button:disabled {
 }
 
 .telegram-input-shell-active {
-  border-color: #4f46e5;
-  background: #eef2ff;
+  border-color: #a5b4fc;
+  background: #f5f7ff;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
 }
 
 .telegram-icon-btn {
@@ -856,14 +885,14 @@ button:disabled {
   height: 38px;
   border-radius: 999px;
   padding: 0;
-  background: #eef2ff;
-  color: #312e81;
-  border: 1px solid #c7d2fe;
+  background: #ffffff;
+  color: #4338ca;
+  border: 1px solid #d4d4d8;
   font-size: 18px;
 }
 
 .telegram-icon-btn:hover {
-  background: #dbeafe;
+  background: #eef2ff;
 }
 
 .telegram-icon-btn-active {
@@ -878,6 +907,13 @@ button:disabled {
   height: 42px;
   border-radius: 999px;
   padding: 0;
+  background: #4f46e5;
+  border-color: #4f46e5;
+}
+
+.telegram-send-btn:hover {
+  background: #4338ca;
+  border-color: #4338ca;
 }
 
 .telegram-drop-hint {
