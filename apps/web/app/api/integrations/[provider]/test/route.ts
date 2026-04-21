@@ -69,11 +69,15 @@ export async function POST(_: Request, context: Context) {
       message: testResult.message,
     });
   }
+  if (!meta.enumValue) {
+    return fail("Provider storage is not configured", "BAD_REQUEST", 400);
+  }
+  const providerEnum = meta.enumValue as Exclude<ProviderEnum, null>;
 
   const integration: any = await prisma.providerIntegration.findFirst({
     where: {
       tenantId: auth.tenantId,
-      provider: meta.enumValue as ProviderEnum,
+      provider: providerEnum,
     },
     orderBy: { createdAt: "desc" },
   });

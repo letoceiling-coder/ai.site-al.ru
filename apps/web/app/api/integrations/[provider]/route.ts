@@ -70,11 +70,15 @@ export async function PUT(request: Request, context: Context) {
     });
     return ok({ integration: upserted });
   }
+  if (!meta.enumValue) {
+    return fail("Provider storage is not configured", "BAD_REQUEST", 400);
+  }
+  const providerEnum = meta.enumValue as Exclude<ProviderEnum, null>;
 
   const existing: any = await prisma.providerIntegration.findFirst({
     where: {
       tenantId: auth.tenantId,
-      provider: meta.enumValue as ProviderEnum,
+      provider: providerEnum,
     },
     orderBy: { createdAt: "desc" },
   });
@@ -98,7 +102,7 @@ export async function PUT(request: Request, context: Context) {
   const created = await prisma.providerIntegration.create({
     data: {
       tenantId: auth.tenantId,
-      provider: meta.enumValue as ProviderEnum,
+      provider: providerEnum,
       displayName: meta.title,
       encryptedSecret: apiKey ? encodeSecret(apiKey) : "",
       status: enabled ? "ACTIVE" : "DISABLED",
