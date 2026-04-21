@@ -366,6 +366,7 @@ export function AgentsPageClient() {
     }
     const response = await fetch("/api/uploads", {
       method: "POST",
+      credentials: "include",
       body: form,
     });
     const body = (await response.json()) as UploadResponse;
@@ -435,7 +436,7 @@ export function AgentsPageClient() {
     let hadError = false;
     recognitionRef.current = recognition;
     recognition.lang = "ru-RU";
-    recognition.interimResults = true;
+    recognition.interimResults = false;
     recognition.continuous = false;
     recognition.onstart = () => {
       setListening(true);
@@ -455,10 +456,18 @@ export function AgentsPageClient() {
       recognitionRef.current = null;
     };
     recognition.onresult = (event: any) => {
-      const text = Array.from(event.results)
-        .map((result: any) => String(result[0]?.transcript ?? ""))
-        .join(" ");
-      setChatInput((prev) => `${prev} ${text}`.trim());
+      let text = "";
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        if (result?.isFinal) {
+          text += String(result[0]?.transcript ?? "");
+        }
+      }
+      const normalized = text.trim();
+      if (!normalized) {
+        return;
+      }
+      setChatInput((prev) => (prev.trim() ? `${prev.trim()} ${normalized}` : normalized));
     };
     recognition.start();
   }
