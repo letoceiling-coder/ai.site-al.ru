@@ -1026,6 +1026,82 @@ button:disabled {
   color: var(--muted);
 }
 
+.knowledge-docs {
+  max-width: 720px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #374151;
+}
+
+.knowledge-docs h1 {
+  margin: 0 0 10px;
+  font-size: 1.35rem;
+  color: #111827;
+}
+
+.knowledge-docs h2 {
+  margin: 22px 0 8px;
+  font-size: 1.05rem;
+  color: #111827;
+}
+
+.knowledge-docs-lead {
+  margin: 0 0 16px;
+  color: #6b7280;
+}
+
+.knowledge-docs ul {
+  margin: 8px 0;
+  padding-left: 1.2rem;
+}
+
+.knowledge-docs li {
+  margin-bottom: 6px;
+}
+
+.knowledge-docs code {
+  font-size: 12px;
+  background: #f3f4f6;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.knowledge-docs-back {
+  margin-top: 28px;
+}
+
+.knowledge-suggest-cards {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+}
+
+.knowledge-suggest-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 6px;
+  background: #f9fafb;
+}
+
+.knowledge-suggest-card strong {
+  font-size: 13px;
+}
+
+.knowledge-suggest-card button {
+  align-self: flex-start;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
 .assistants-routing {
   border-top: 1px solid var(--line);
   margin-top: 8px;

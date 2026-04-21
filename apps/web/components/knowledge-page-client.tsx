@@ -66,6 +66,9 @@ export function KnowledgePageClient() {
   const [fileBusy, setFileBusy] = useState(false);
   const [dragFile, setDragFile] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const [suggestCards, setSuggestCards] = useState<{ title: string; content: string }[]>([]);
+  const [suggestBusy, setSuggestBusy] = useState(false);
+  const [suggestNotice, setSuggestNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedKbQuery(kbQuery.trim()), 300);
@@ -235,6 +238,36 @@ export function KnowledgePageClient() {
     setSaving(false);
   }
 
+  async function onSuggestSplit() {
+    if (!selectedId || itemContent.trim().length < 80) {
+      setError("Вставьте черновик в поле «Текст» (от ~80 символов) и нажмите снова");
+      return;
+    }
+    setSuggestBusy(true);
+    setError(null);
+    setSuggestNotice(null);
+    setSuggestCards([]);
+    const res = await fetch(`/api/knowledge/${selectedId}/suggest-split`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rawText: itemContent.trim() }),
+    });
+    const body = (await res.json()) as {
+      ok: boolean;
+      data?: { cards?: { title: string; content: string }[]; notice?: string };
+      error?: { message?: string };
+    };
+    if (!res.ok || !body.ok) {
+      setError(body.error?.message ?? "ИИ-подсказка недоступна");
+      setSuggestBusy(false);
+      return;
+    }
+    const cards = body.data?.cards ?? [];
+    setSuggestCards(cards);
+    setSuggestNotice(body.data?.notice ?? null);
+    setSuggestBusy(false);
+  }
+
   async function onAddUrlItem() {
     if (!selectedId || !urlTitle.trim() || !urlValue.trim()) {
       setError("Укажите название и URL");
@@ -247,11 +280,18 @@ export function KnowledgePageClient() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: urlTitle.trim(), sourceType: "URL", sourceUrl: urlValue.trim() }),
     });
-    const body = (await res.json()) as { ok: boolean; error?: { message?: string } };
+    const body = (await res.json()) as {
+      ok: boolean;
+      error?: { message?: string };
+      data?: { urlIngest?: { ok: boolean; message?: string } };
+    };
     if (!res.ok || !body.ok) {
       setError(body.error?.message ?? "Не удалось добавить ссылку");
       setSaving(false);
       return;
+    }
+    if (body.data?.urlIngest && !body.data.urlIngest.ok) {
+      setError(body.data.urlIngest.message ?? "Страница не загружена — запись сохранена со статусом FAILED");
     }
     setUrlTitle("");
     setUrlValue("");
@@ -355,6 +395,10 @@ export function KnowledgePageClient() {
             ассистента. Подключение — в{" "}
             <Link href="/assistants" className="knowledge-link">
               Ассистенты
+            </Link>
+            .{" "}
+            <Link href="/docs/knowledge" className="knowledge-link">
+              Справка и лимиты
             </Link>
             .
           </p>
@@ -515,6 +559,32 @@ export function KnowledgePageClient() {
                       <input value={itemTitle} onChange={(e) => setItemTitle(e.target.value)} placeholder="Тема" />
                       <label>Текст</label>
                       <textarea rows={5} value={itemContent} onChange={(e) => setItemContent(e.target.value)} placeholder="Полный текст фрагмента" />
+                      <div className="knowledge-inline-actions">
+                        <button type="button" className="knowledge-btn-secondary knowledge-btn-sm" disabled={suggestBusy} onClick={() => void onSuggestSplit()}>
+                          {suggestBusy ? "ИИ…" : "ИИ: предложить карточки"}
+                        </button>
+                      </div>
+                      {suggestNotice ? <p className="knowledge-hint">{suggestNotice}</p> : null}
+                      {suggestCards.length > 0 ? (
+                        <div className="knowledge-suggest-cards">
+                          {suggestCards.map((c, i) => (
+                            <div key={`${c.title}-${i}`} className="knowledge-suggest-card">
+                              <strong>{c.title}</strong>
+                              <small className="knowledge-hint">{c.content.slice(0, 160)}{c.content.length > 160 ? "…" : ""}</small>
+                              <button
+                                type="button"
+                                className="button-ghost"
+                                onClick={() => {
+                                  setItemTitle(c.title);
+                                  setItemContent(c.content);
+                                }}
+                              >
+                                Вставить в форму
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                       <button type="button" className="knowledge-btn-primary knowledge-btn-sm" disabled={saving} onClick={() => void onAddTextItem()}>
                         {saving ? "…" : "Добавить"}
                       </button>
@@ -523,7 +593,10 @@ export function KnowledgePageClient() {
 
                   {addTab === "url" ? (
                     <div className="knowledge-add-url">
-                      <p className="knowledge-hint">Ссылка сохраняется как ориентир; авто-скрейпинг можно добавить отдельно.</p>
+                      <p className="knowledge-hint">
+                        Страница загружается на сервере, HTML очищается и режется на чанки (таймаут и лимит размера). Сайты с
+                        защитой от ботов могут не отдать текст.
+                      </p>
                       <label>Заголовок</label>
                       <input value={urlTitle} onChange={(e) => setUrlTitle(e.target.value)} />
                       <label>URL</label>

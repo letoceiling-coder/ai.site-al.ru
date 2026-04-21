@@ -24,6 +24,12 @@
   - `cp /etc/nginx/sites-available/ai.site-al.ru.conf /etc/nginx/sites-available/ai.site-al.ru.conf.bak.$(date +%F-%H%M%S)`
 - Сделать backup `.env` и текущего release.
 
+## Миграции БД (pgvector / RAG)
+
+- Для семантического поиска по базе знаний нужны расширение **pgvector** и миграция `20260221140000_knowledge_chunk_vectors_fts` (столбцы `Chunk.embedding`, `Chunk.content_tsv`, индексы).
+- На сервере: `cd packages/db && npx prisma migrate deploy` (или ваш принятый способ применения миграций).
+- Если `CREATE EXTENSION vector` запрещён роли БД — включите расширение администратором кластера, затем повторите миграцию.
+
 ## Post-Deploy Validation
 - Проверить health endpoint.
 - Проверить login/logout flow.

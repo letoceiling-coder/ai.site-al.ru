@@ -448,6 +448,8 @@ model Chunk {
   content      String
   tokenCount   Int
   embeddingRef String?
+  /// Вектор эмбеддинга (pgvector); обновляется воркером после ingest. Prisma не типизирует vector.
+  embedding    Unsupported("vector(1536)")?
   createdAt    DateTime @default(now())
   document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 

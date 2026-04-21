@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import type { Prisma } from "@prisma/client";
@@ -6,6 +7,15 @@ import { prisma } from "@ai/db";
 const CHUNK_TARGET = 1800;
 const CHUNK_OVERLAP = 200;
 const MAX_CHUNKS_PER_DOC = 400;
+
+/** Выше этого размера текстовый фрагмент режется на Document + Chunk, как файлы. */
+export const TEXT_CHUNK_THRESHOLD = 2200;
+
+/** Максимум символов в одном запросе добавления текста. */
+export const MAX_KNOWLEDGE_TEXT_CHARS = 500_000;
+
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL?.trim() || "text-embedding-3-small";
+const SKIP_EMBEDDING_JOBS = process.env.DISABLE_EMBEDDING_JOBS === "true";
 
 export type IngestSource = {
   url: string;
@@ -75,11 +85,14 @@ export async function extractTextFromFile(
   }
 
   if (mime === "application/pdf" || lower.endsWith(".pdf")) {
+    const t0 = Date.now();
     const { PDFParse } = await import("pdf-parse");
     const parser = new PDFParse({ data: new Uint8Array(buffer) });
     try {
       const tr = await parser.getText();
-      return { text: (tr.text ?? "").trim(), note: "PDF" };
+      const text = (tr.text ?? "").trim();
+      const pdfMs = Date.now() - t0;
+      return { text, note: `PDF, извлечение ${pdfMs}ms` };
     } finally {
       await parser.destroy().catch(() => undefined);
     }
@@ -111,6 +124,70 @@ export async function extractTextFromFile(
   return { text: "", note: `Формат не поддерживается для авто-извлечения: ${mime || "unknown"}` };
 }
 
+/** Создаёт Document + Chunk + опционально EmbeddingJob (внутри переданной транзакции). */
+export async function createDocumentWithChunks(
+  tx: Prisma.TransactionClient,
+  params: {
+    tenantId: string;
+    knowledgeItemId: string;
+    objectKey: string;
+    mimeType: string;
+    fileSize: number;
+    pieces: string[];
+  },
+) {
+  const doc = await tx.document.create({
+    data: {
+      tenantId: params.tenantId,
+      knowledgeItemId: params.knowledgeItemId,
+      objectKey: params.objectKey,
+      mimeType: params.mimeType,
+      fileSize: params.fileSize,
+      parsingStatus: "COMPLETED",
+    },
+  });
+  if (params.pieces.length > 0) {
+    await tx.chunk.createMany({
+      data: params.pieces.map((content, idx) => ({
+        tenantId: params.tenantId,
+        documentId: doc.id,
+        idx,
+        content,
+        tokenCount: estimateTokens(content),
+      })),
+    });
+  }
+  if (!SKIP_EMBEDDING_JOBS && params.pieces.length > 0) {
+    await tx.embeddingJob.create({
+      data: {
+        tenantId: params.tenantId,
+        documentId: doc.id,
+        provider: "OPENAI",
+        model: EMBEDDING_MODEL,
+        status: "QUEUED",
+      },
+    });
+  }
+  return doc;
+}
+
+async function removeDuplicateFileIngest(tenantId: string, knowledgeBaseId: string, sourceUrl: string, sha256: string) {
+  const dup = await prisma.knowledgeItem.findFirst({
+    where: {
+      tenantId,
+      knowledgeBaseId,
+      sourceType: "FILE",
+      OR: [
+        { metadata: { path: ["sourceUrl"], equals: sourceUrl } },
+        { metadata: { path: ["contentSha256"], equals: sha256 } },
+      ],
+    },
+  });
+  if (dup) {
+    await prisma.knowledgeItem.delete({ where: { id: dup.id } });
+  }
+}
+
 export async function ingestSourcesToKnowledgeBase(input: {
   tenantId: string;
   knowledgeBaseId: string;
@@ -140,9 +217,24 @@ export async function ingestSourcesToKnowledgeBase(input: {
       continue;
     }
 
-    const { text, note } = await extractTextFromFile(buffer, src.mimeType, src.name);
+    const sha256 = createHash("sha256").update(buffer).digest("hex");
+    await removeDuplicateFileIngest(input.tenantId, input.knowledgeBaseId, src.url, sha256);
+
+    const ingestT0 = Date.now();
+    let parseNote: string | undefined;
+    let text: string;
+    try {
+      const extracted = await extractTextFromFile(buffer, src.mimeType, src.name);
+      text = extracted.text;
+      parseNote = extracted.note;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`${src.name}: ошибка разбора (${msg})`);
+      continue;
+    }
+
     if (!text.trim()) {
-      errors.push(`${src.name}: пустой текст${note ? ` (${note})` : ""}`);
+      errors.push(`${src.name}: пустой текст${parseNote ? ` (${parseNote})` : ""}`);
       continue;
     }
 
@@ -154,6 +246,7 @@ export async function ingestSourcesToKnowledgeBase(input: {
 
     const titleBase = src.name.replace(/\.[^.]+$/, "") || src.name;
     const objectKey = rel.replace(/^public[\\/]/, "").replace(/\\/g, "/");
+    const ingestMs = Date.now() - ingestT0;
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const item = await tx.knowledgeItem.create({
@@ -168,29 +261,22 @@ export async function ingestSourcesToKnowledgeBase(input: {
             sourceUrl: src.url,
             mimeType: src.mimeType,
             size: src.size,
+            contentSha256: sha256,
             chunkCount: pieces.length,
-            ingestNote: note ?? null,
+            extractedCharCount: text.length,
+            ingestMs,
+            ingestNote: parseNote ?? null,
+            parserError: null,
           } as object,
         },
       });
-      const doc = await tx.document.create({
-        data: {
-          tenantId: input.tenantId,
-          knowledgeItemId: item.id,
-          objectKey,
-          mimeType: src.mimeType || "application/octet-stream",
-          fileSize: src.size,
-          parsingStatus: "COMPLETED",
-        },
-      });
-      await tx.chunk.createMany({
-        data: pieces.map((content, idx) => ({
-          tenantId: input.tenantId,
-          documentId: doc.id,
-          idx,
-          content,
-          tokenCount: estimateTokens(content),
-        })),
+      await createDocumentWithChunks(tx, {
+        tenantId: input.tenantId,
+        knowledgeItemId: item.id,
+        objectKey,
+        mimeType: src.mimeType || "application/octet-stream",
+        fileSize: src.size,
+        pieces,
       });
     });
 
