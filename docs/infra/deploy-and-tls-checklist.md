@@ -1,5 +1,11 @@
 # Deploy and TLS Checklist
 
+## Production SSH (деплой)
+
+- **Единственный продакшен-хост:** `root@89.169.39.244`.
+- Подключение: `ssh root@89.169.39.244` (при необходимости укажите ключ: `ssh -i ~/.ssh/id_rsa root@89.169.39.244`).
+- Дальше на сервере: `cd /var/www/ai.site-al.ru`, `git pull`, сборка и перезапуск по вашему чеклисту (см. `infra/scripts/deploy.sh` и PM2).
+
 ## Server Layout
 - Проектная директория: `/var/www/ai.site-al.ru`.
 - Приложение слушает отдельный порт: `3006`.
