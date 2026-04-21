@@ -1,11 +1,5 @@
-import { ModuleCrudPage } from "@/components/module-crud-page";
+import { UsageAgentsPageClient } from "@/components/usage-agents-page";
 
 export default function UsagePage() {
-  return (
-    <ModuleCrudPage
-      moduleKey="usage"
-      title="Usage"
-      description="Usage-метрики и затраты только в рамках вашего tenant."
-    />
-  );
+  return <UsageAgentsPageClient />;
 }
