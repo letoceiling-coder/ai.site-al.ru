@@ -99,10 +99,29 @@ export async function PUT(request: Request, context: Context) {
   }
 
   if (typeof body.providerIntegrationId === "string") {
-    const integration = await prisma.providerIntegration.findFirst({
-      where: { id: body.providerIntegrationId, tenantId: auth.tenantId },
-      select: { id: true, status: true, encryptedSecret: true, metadata: true },
-    });
+    let integration = null as null | { id: string; status: string; encryptedSecret: string; metadata: unknown };
+    let useOpenRouter = false;
+    if (body.providerIntegrationId === "openrouter") {
+      const setting = await prisma.systemSetting.findFirst({
+        where: { tenantId: auth.tenantId, key: "openrouter" },
+        select: { value: true },
+      });
+      const value = (setting?.value ?? {}) as { enabled?: boolean; lastTestOk?: boolean };
+      if (!value.enabled || !value.lastTestOk) {
+        return fail("OpenRouter не подключен. Сначала сохраните и протестируйте его в Интеграции AI.", "VALIDATION_ERROR", 400);
+      }
+      useOpenRouter = true;
+      integration = await prisma.providerIntegration.findFirst({
+        where: { tenantId: auth.tenantId, status: "ACTIVE" },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, status: true, encryptedSecret: true, metadata: true },
+      });
+    } else {
+      integration = await prisma.providerIntegration.findFirst({
+        where: { id: body.providerIntegrationId, tenantId: auth.tenantId },
+        select: { id: true, status: true, encryptedSecret: true, metadata: true },
+      });
+    }
     if (!integration) {
       return fail("Интеграция не найдена", "NOT_FOUND", 404);
     }
@@ -110,6 +129,12 @@ export async function PUT(request: Request, context: Context) {
       return fail("Интеграция не подключена. Сначала выполните успешный тест в разделе Интеграции AI.", "VALIDATION_ERROR", 400);
     }
     data.providerIntegrationId = integration.id;
+    if (useOpenRouter) {
+      data.configJson = {
+        ...(typeof data.configJson === "object" && data.configJson !== null ? (data.configJson as Record<string, unknown>) : {}),
+        useOpenRouter: true,
+      };
+    }
   }
 
   if (typeof body.model === "string") {
@@ -147,7 +172,14 @@ export async function PUT(request: Request, context: Context) {
     if (body.configJson !== null && typeof body.configJson !== "object") {
       return fail("configJson должен быть объектом", "VALIDATION_ERROR", 400);
     }
-    data.configJson = body.configJson;
+    const existingConfig =
+      typeof data.configJson === "object" && data.configJson !== null ? (data.configJson as Record<string, unknown>) : {};
+    const incomingConfig =
+      body.configJson && typeof body.configJson === "object" ? (body.configJson as Record<string, unknown>) : {};
+    data.configJson = {
+      ...incomingConfig,
+      ...existingConfig,
+    };
   }
 
   const item = await prisma.agent.update({

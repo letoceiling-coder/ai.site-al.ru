@@ -392,32 +392,100 @@ export function AgentsPageClient() {
     }
     setChatLoading(true);
     setChatError(null);
+    const pendingText = chatInput.trim();
+    const pendingFiles = [...chatFiles];
     try {
       const currentDialogId = await ensureSession(activeAgentId);
-      const response = await fetch(`/api/agents/${activeAgentId}/chat/messages`, {
+      const userLocalId = `u-${Date.now()}`;
+      const assistantLocalId = `a-${Date.now()}`;
+      const nowIso = new Date().toISOString();
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: userLocalId,
+          role: "USER",
+          text: pendingText,
+          attachments: pendingFiles,
+          createdAt: nowIso,
+        },
+        {
+          id: assistantLocalId,
+          role: "ASSISTANT",
+          text: "",
+          attachments: [],
+          createdAt: nowIso,
+        },
+      ]);
+      setChatInput("");
+      setChatFiles([]);
+
+      const response = await fetch(`/api/agents/${activeAgentId}/chat/messages/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           dialogId: currentDialogId,
-          text: chatInput.trim(),
-          attachments: chatFiles,
+          text: pendingText,
+          attachments: pendingFiles,
         }),
       });
-      const body = (await response.json()) as {
-        ok: boolean;
-        data?: { dialogId?: string; messages?: ChatMessage[] };
-        error?: { message?: string };
-      };
-      if (!response.ok || !body.ok || !body.data?.messages) {
-        throw new Error(body.error?.message ?? "Не удалось отправить сообщение");
+      if (!response.ok || !response.body) {
+        throw new Error("Не удалось начать streaming ответа");
       }
-      setDialogId(body.data.dialogId ?? currentDialogId);
-      setChatInput("");
-      setChatFiles([]);
-      await loadMessages(activeAgentId, body.data.dialogId ?? currentDialogId);
-      const lastAssistant = [...body.data.messages].reverse().find((item) => item.role === "ASSISTANT");
-      if (lastAssistant?.text) {
-        speakText(lastAssistant.text);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finalAssistantText = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+
+        for (const frame of frames) {
+          const line = frame
+            .split("\n")
+            .find((item) => item.startsWith("data:"))
+            ?.slice(5)
+            .trim();
+          if (!line) {
+            continue;
+          }
+          const payload = JSON.parse(line) as {
+            type?: string;
+            text?: string;
+            dialogId?: string;
+            message?: string;
+          };
+          if (payload.type === "meta" && payload.dialogId) {
+            setDialogId(payload.dialogId);
+          } else if (payload.type === "token") {
+            finalAssistantText = payload.text ?? finalAssistantText;
+            setChatMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === assistantLocalId
+                  ? {
+                      ...msg,
+                      text: finalAssistantText,
+                    }
+                  : msg,
+              ),
+            );
+          } else if (payload.type === "done") {
+            finalAssistantText = payload.text ?? finalAssistantText;
+          } else if (payload.type === "error") {
+            throw new Error(payload.message ?? "Ошибка в streaming");
+          }
+        }
+      }
+
+      await loadMessages(activeAgentId, currentDialogId);
+      if (finalAssistantText) {
+        speakText(finalAssistantText);
       }
     } catch (error) {
       setChatError(error instanceof Error ? error.message : "Ошибка отправки сообщения");
@@ -438,17 +506,6 @@ export function AgentsPageClient() {
     setChatInput("");
     setChatError(null);
   }, [activeAgentId]);
-
-  useEffect(() => {
-    if (!activeAgentId || !dialogId) {
-      return;
-    }
-    const timer = setInterval(() => {
-      void loadMessages(activeAgentId);
-    }, 1500);
-    return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAgentId, dialogId]);
 
   return (
     <section className="card">

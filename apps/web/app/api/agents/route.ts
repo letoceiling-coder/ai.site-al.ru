@@ -2,7 +2,7 @@ import { prisma } from "@ai/db";
 import { fail, ok } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
 
-type ProviderType = "OPENAI" | "ANTHROPIC" | "GEMINI" | "XAI" | "REPLICATE" | "ELEVENLABS";
+type ProviderType = "OPENAI" | "ANTHROPIC" | "GEMINI" | "XAI" | "REPLICATE" | "ELEVENLABS" | "OPENROUTER";
 type AgentStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
 
 const providerDefaults: Record<ProviderType, string[]> = {
@@ -39,6 +39,7 @@ const providerDefaults: Record<ProviderType, string[]> = {
     "mistralai/mistral-7b-instruct-v0.2",
   ],
   ELEVENLABS: ["eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5"],
+  OPENROUTER: ["openai/gpt-4.1-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001"],
 };
 
 type AgentPayload = {
@@ -126,7 +127,7 @@ export async function GET() {
     return fail("Unauthorized", "UNAUTHORIZED", 401);
   }
 
-  const [agents, integrations, modelOptions] = await Promise.all([
+  const [agents, integrations, modelOptions, openrouterSetting] = await Promise.all([
     prisma.agent.findMany({
       where: { tenantId: auth.tenantId, deletedAt: null },
       include: { providerIntegration: { select: { provider: true, displayName: true, status: true } } },
@@ -138,6 +139,10 @@ export async function GET() {
       orderBy: { createdAt: "asc" },
     }),
     buildModelOptions(auth.tenantId),
+    prisma.systemSetting.findFirst({
+      where: { tenantId: auth.tenantId, key: "openrouter" },
+      select: { value: true },
+    }),
   ]);
 
   const connectedIntegrations = integrations
@@ -148,6 +153,21 @@ export async function GET() {
       displayName: integration.displayName,
       status: integration.status,
     }));
+
+  const openrouter = (openrouterSetting?.value ?? {}) as {
+    enabled?: boolean;
+    model?: string;
+    lastTestOk?: boolean;
+  };
+  connectedIntegrations.unshift({
+    id: "openrouter",
+    provider: "OPENROUTER",
+    displayName: openrouter.enabled ? "OpenRouter" : "OpenRouter (не подключен)",
+    status: openrouter.enabled ? "ACTIVE" : "DISABLED",
+  });
+  const presetModel = typeof openrouter.model === "string" && openrouter.model.trim() ? openrouter.model.trim() : null;
+  const base = modelOptions.OPENROUTER ?? providerDefaults.OPENROUTER;
+  modelOptions.OPENROUTER = presetModel ? Array.from(new Set([presetModel, ...base])) : base;
 
   return ok({
     agents,
@@ -172,10 +192,29 @@ export async function POST(request: Request) {
   if (!providerIntegrationId) {
     return fail("Выберите интеграцию провайдера", "VALIDATION_ERROR", 400);
   }
-  const integration = await prisma.providerIntegration.findFirst({
-    where: { id: providerIntegrationId, tenantId: auth.tenantId },
-    select: { id: true, status: true, encryptedSecret: true, metadata: true },
-  });
+  let integration = null as null | { id: string; status: string; encryptedSecret: string; metadata: unknown };
+  let useOpenRouter = false;
+  if (providerIntegrationId === "openrouter") {
+    const setting = await prisma.systemSetting.findFirst({
+      where: { tenantId: auth.tenantId, key: "openrouter" },
+      select: { value: true },
+    });
+    const value = (setting?.value ?? {}) as { enabled?: boolean; lastTestOk?: boolean };
+    if (!value.enabled || !value.lastTestOk) {
+      return fail("OpenRouter не подключен. Сначала сохраните и протестируйте его в Интеграции AI.", "VALIDATION_ERROR", 400);
+    }
+    useOpenRouter = true;
+    integration = await prisma.providerIntegration.findFirst({
+      where: { tenantId: auth.tenantId, status: "ACTIVE" },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, status: true, encryptedSecret: true, metadata: true },
+    });
+  } else {
+    integration = await prisma.providerIntegration.findFirst({
+      where: { id: providerIntegrationId, tenantId: auth.tenantId },
+      select: { id: true, status: true, encryptedSecret: true, metadata: true },
+    });
+  }
   if (!integration) {
     return fail("Интеграция не найдена", "NOT_FOUND", 404);
   }
@@ -211,6 +250,14 @@ export async function POST(request: Request) {
       maxTokens,
       status,
       configJson: body.configJson && typeof body.configJson === "object" ? body.configJson : undefined,
+      ...(useOpenRouter
+        ? {
+            configJson: {
+              ...(body.configJson && typeof body.configJson === "object" ? (body.configJson as Record<string, unknown>) : {}),
+              useOpenRouter: true,
+            },
+          }
+        : {}),
     },
     include: { providerIntegration: { select: { provider: true, displayName: true, status: true } } },
   });

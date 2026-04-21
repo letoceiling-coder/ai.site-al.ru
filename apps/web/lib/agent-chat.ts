@@ -246,7 +246,10 @@ export async function buildAssistantReply(input: {
     autoRouting?: boolean;
   };
   const openRouterEnabled = Boolean(openRouterConfig.enabled && openRouterConfig.apiKey);
-  const shouldUseOpenRouter = Boolean(openRouterEnabled && openRouterConfig.autoRouting);
+  const agentConfig = (agent.configJson ?? {}) as { useOpenRouter?: boolean };
+  const shouldUseOpenRouter = Boolean(
+    openRouterEnabled && (agentConfig.useOpenRouter === true || openRouterConfig.autoRouting === true),
+  );
 
   const userTextWithAttachments =
     input.attachments.length > 0
