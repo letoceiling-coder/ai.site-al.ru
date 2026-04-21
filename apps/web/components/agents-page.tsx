@@ -937,20 +937,43 @@ export function AgentsPageClient() {
 
                 <div className="agent-chat-input telegram-composer">
                   <div
-                    className={`chat-dropzone ${dragActive ? "chat-dropzone-active" : ""}`}
+                    className={`telegram-input-shell ${dragActive ? "telegram-input-shell-active" : ""}`}
                     onDrop={handleDrop}
                     onDragEnter={handleDrag}
                     onDragOver={handleDrag}
                     onDragLeave={handleDrag}
                   >
-                    <p>Перетащите файлы сюда или загрузите вручную</p>
                     <button
                       type="button"
-                      className="chat-upload-btn"
+                      className="telegram-icon-btn"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={uploadingFiles}
+                      title="Прикрепить файлы"
                     >
-                      {uploadingFiles ? "Загрузка..." : "Выбрать файлы"}
+                      {"\ud83d\udcce"}
+                    </button>
+                    <textarea
+                      rows={2}
+                      value={chatInput}
+                      onChange={(event) => setChatInput(event.target.value)}
+                      placeholder="Введите сообщение для проверки агента..."
+                    />
+                    <button
+                      type="button"
+                      className={`telegram-icon-btn ${listening ? "telegram-icon-btn-active" : ""}`}
+                      onClick={startVoiceInput}
+                      title="Голосовой ввод"
+                    >
+                      {"\ud83c\udfa4"}
+                    </button>
+                    <button
+                      type="button"
+                      className="telegram-send-btn"
+                      disabled={chatLoading || !chatInput.trim()}
+                      onClick={() => void sendMessage()}
+                      title="Отправить"
+                    >
+                      {chatLoading ? "..." : "\u27a4"}
                     </button>
                     <input
                       ref={fileInputRef}
@@ -963,6 +986,9 @@ export function AgentsPageClient() {
                       }}
                     />
                   </div>
+                  <p className="telegram-drop-hint">
+                    {dragActive ? "Отпустите файлы для загрузки" : "Перетащите файлы в поле ввода или нажмите скрепку"}
+                  </p>
 
                   {chatFiles.length > 0 ? (
                     <div className="chat-pending-files">
@@ -980,18 +1006,6 @@ export function AgentsPageClient() {
                       ))}
                     </div>
                   ) : null}
-
-                  <div className="telegram-composer-row">
-                    <textarea
-                      rows={2}
-                      value={chatInput}
-                      onChange={(event) => setChatInput(event.target.value)}
-                      placeholder="Введите сообщение для проверки агента..."
-                    />
-                    <button type="button" disabled={chatLoading || !chatInput.trim()} onClick={() => void sendMessage()}>
-                      {chatLoading ? "..." : "Отправить"}
-                    </button>
-                  </div>
                   {chatError ? <p style={{ color: "crimson" }}>{chatError}</p> : null}
                 </div>
               </>

@@ -820,22 +820,70 @@ button:disabled {
   padding-top: 10px;
 }
 
-.telegram-composer-row {
+.telegram-input-shell {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto auto;
   gap: 8px;
   align-items: end;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  padding: 8px;
+  background: #fff;
 }
 
-.telegram-composer-row textarea {
-  min-height: 54px;
+.telegram-input-shell textarea {
+  border: none;
+  box-shadow: none;
+  padding: 8px 6px;
+  min-height: 44px;
   max-height: 140px;
   resize: vertical;
 }
 
-.telegram-composer-row button {
+.telegram-input-shell textarea:focus {
+  border: none;
+  box-shadow: none;
+}
+
+.telegram-input-shell-active {
+  border-color: #4f46e5;
+  background: #eef2ff;
+}
+
+.telegram-icon-btn {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  padding: 0;
+  background: #eef2ff;
+  color: #312e81;
+  border: 1px solid #c7d2fe;
+  font-size: 18px;
+}
+
+.telegram-icon-btn:hover {
+  background: #dbeafe;
+}
+
+.telegram-icon-btn-active {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.telegram-send-btn {
+  width: 42px;
+  min-width: 42px;
   height: 42px;
-  padding: 0 14px;
+  border-radius: 999px;
+  padding: 0;
+}
+
+.telegram-drop-hint {
+  margin: 6px 2px 0;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .chat-dropzone {
@@ -892,7 +940,15 @@ button:disabled {
     max-width: 92%;
   }
 
-  .telegram-composer-row {
-    grid-template-columns: 1fr;
+  .telegram-input-shell {
+    grid-template-columns: 1fr auto auto;
+  }
+
+  .telegram-input-shell textarea {
+    grid-column: 1 / span 3;
+  }
+
+  .telegram-icon-btn:first-of-type {
+    order: 2;
   }
 }
