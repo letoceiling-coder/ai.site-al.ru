@@ -3,6 +3,15 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
+type KnowledgeSettings = {
+  chunkSize: number;
+  chunkOverlap: number;
+  grounding: "strict" | "mixed";
+  autoTitle: boolean;
+  maxContextChars: number;
+  template?: string;
+};
+
 type KnowledgeBaseRow = {
   id: string;
   name: string;
@@ -11,6 +20,7 @@ type KnowledgeBaseRow = {
   itemCount: number;
   createdAt: string;
   updatedAt: string;
+  settings?: KnowledgeSettings;
 };
 
 type ItemRow = {
@@ -27,6 +37,64 @@ type ItemRow = {
 type ListResponse = { ok: boolean; data?: { knowledgeBases?: KnowledgeBaseRow[] } };
 type ItemsResponse = { ok: boolean; data?: { items?: ItemRow[] } };
 type OneResponse = { ok: boolean; data?: { knowledgeBase?: KnowledgeBaseRow } };
+
+type TemplatePreset = {
+  code: string;
+  title: string;
+  subtitle: string;
+  recommendedFor: string;
+  defaultName: string;
+  defaultDescription: string;
+  defaultTab: "file" | "text" | "url" | "batch";
+};
+
+const TEMPLATES: TemplatePreset[] = [
+  {
+    code: "blank",
+    title: "Пустая база",
+    subtitle: "Начать с нуля — вы сами загружаете файлы/текст/URL.",
+    recommendedFor: "Универсально, если у вас уже есть набор материалов.",
+    defaultName: "Новая база знаний",
+    defaultDescription: "",
+    defaultTab: "file",
+  },
+  {
+    code: "faq",
+    title: "FAQ и ответы",
+    subtitle: "Короткие вопросы-ответы, небольшие чанки.",
+    recommendedFor: "Поддержка клиентов, типовые обращения, скрипты менеджеров.",
+    defaultName: "FAQ",
+    defaultDescription: "Частые вопросы клиентов и подготовленные ответы.",
+    defaultTab: "text",
+  },
+  {
+    code: "docs",
+    title: "Документация продукта",
+    subtitle: "Среднего размера разделы руководства.",
+    recommendedFor: "Гайды, справка, мануалы, technical docs.",
+    defaultName: "Документация",
+    defaultDescription: "Разделы руководства по продукту.",
+    defaultTab: "file",
+  },
+  {
+    code: "policy",
+    title: "Регламенты и политики",
+    subtitle: "Крупные фрагменты, строгий режим без домыслов.",
+    recommendedFor: "Юридические тексты, внутренние регламенты, инструкции.",
+    defaultName: "Регламенты",
+    defaultDescription: "Внутренние регламенты и политики компании.",
+    defaultTab: "file",
+  },
+  {
+    code: "marketing",
+    title: "Маркетинг и контент",
+    subtitle: "Смешанный режим: база + общие знания модели.",
+    recommendedFor: "Описания продукта, УТП, контент для сайта/рассылок.",
+    defaultName: "Маркетинговые материалы",
+    defaultDescription: "Тексты для сайта, УТП, рекламные описания.",
+    defaultTab: "url",
+  },
+];
 
 function formatDate(s: string) {
   const d = new Date(s);
@@ -50,22 +118,39 @@ export function KnowledgePageClient() {
   const [loading, setLoading] = useState(true);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [removingItem, setRemovingItem] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [reingesting, setReingesting] = useState<string | null>(null);
+
+  // Wizard state
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState<1 | 2>(1);
+  const [wizardTemplate, setWizardTemplate] = useState<TemplatePreset>(TEMPLATES[0]!);
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
+
+  // Editing selected base
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
-  const [addTab, setAddTab] = useState<"text" | "file" | "url">("file");
+  const [editSettings, setEditSettings] = useState<KnowledgeSettings | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Add content tabs
+  const [addTab, setAddTab] = useState<"file" | "text" | "url" | "batch">("file");
   const [itemTitle, setItemTitle] = useState("");
   const [itemContent, setItemContent] = useState("");
   const [urlTitle, setUrlTitle] = useState("");
   const [urlValue, setUrlValue] = useState("");
+  const [batchUrls, setBatchUrls] = useState("");
+  const [batchSitemap, setBatchSitemap] = useState("");
+  const [batchBusy, setBatchBusy] = useState(false);
   const [fileBusy, setFileBusy] = useState(false);
   const [dragFile, setDragFile] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+
+  // AI suggest
   const [suggestCards, setSuggestCards] = useState<{ title: string; content: string }[]>([]);
   const [suggestBusy, setSuggestBusy] = useState(false);
   const [suggestNotice, setSuggestNotice] = useState<string | null>(null);
@@ -114,6 +199,7 @@ export function KnowledgePageClient() {
       setItems([]);
       setEditName("");
       setEditDescription("");
+      setEditSettings(null);
       return;
     }
     void (async () => {
@@ -122,6 +208,7 @@ export function KnowledgePageClient() {
       if (info.ok && info.data?.knowledgeBase) {
         setEditName(info.data.knowledgeBase.name);
         setEditDescription(info.data.knowledgeBase.description ?? "");
+        setEditSettings(info.data.knowledgeBase.settings ?? null);
       }
       await loadItems(selectedId);
     })();
@@ -140,6 +227,26 @@ export function KnowledgePageClient() {
     );
   }, [items, itemQuery]);
 
+  function openWizard() {
+    setWizardTemplate(TEMPLATES[0]!);
+    setNewName("");
+    setNewDescription("");
+    setWizardStep(1);
+    setWizardOpen(true);
+  }
+
+  function pickTemplate(code: string) {
+    const t = TEMPLATES.find((x) => x.code === code) ?? TEMPLATES[0]!;
+    setWizardTemplate(t);
+    if (!newName.trim()) {
+      setNewName(t.defaultName);
+    }
+    if (!newDescription.trim()) {
+      setNewDescription(t.defaultDescription);
+    }
+    setWizardStep(2);
+  }
+
   async function onCreateBase() {
     if (!newName.trim()) {
       setError("Укажите название");
@@ -150,21 +257,29 @@ export function KnowledgePageClient() {
     const res = await fetch("/api/knowledge", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName.trim(), description: newDescription.trim() || undefined }),
+      body: JSON.stringify({
+        name: newName.trim(),
+        description: newDescription.trim() || undefined,
+        template: wizardTemplate.code,
+      }),
     });
-    const body = (await res.json()) as { ok: boolean; error?: { message?: string }; data?: { knowledgeBase?: { id: string } } };
+    const body = (await res.json()) as {
+      ok: boolean;
+      error?: { message?: string };
+      data?: { knowledgeBase?: { id: string } };
+    };
     if (!res.ok || !body.ok) {
       setError(body.error?.message ?? "Не удалось создать базу");
       setSaving(false);
       return;
     }
-    setNewName("");
-    setNewDescription("");
-    setCreateOpen(false);
+    setWizardOpen(false);
     await loadBases();
     const nid = body.data?.knowledgeBase?.id;
     if (nid) {
       setSelectedId(nid);
+      setAddTab(wizardTemplate.defaultTab);
+      setNotice(`База «${newName.trim()}» создана. Добавьте материалы во вкладке ниже.`);
     }
     setSaving(false);
   }
@@ -181,6 +296,7 @@ export function KnowledgePageClient() {
       body: JSON.stringify({
         name: editName.trim(),
         description: editDescription.trim() || null,
+        settings: editSettings ?? undefined,
       }),
     });
     const body = (await res.json()) as { ok: boolean; error?: { message?: string } };
@@ -190,6 +306,7 @@ export function KnowledgePageClient() {
       return;
     }
     await loadBases();
+    setNotice("Настройки сохранены");
     setSaving(false);
   }
 
@@ -214,8 +331,8 @@ export function KnowledgePageClient() {
   }
 
   async function onAddTextItem() {
-    if (!selectedId || !itemTitle.trim() || !itemContent.trim()) {
-      setError("Укажите заголовок и текст");
+    if (!selectedId || !itemContent.trim()) {
+      setError("Введите текст");
       return;
     }
     setSaving(true);
@@ -223,7 +340,11 @@ export function KnowledgePageClient() {
     const res = await fetch(`/api/knowledge/${selectedId}/items`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: itemTitle.trim(), content: itemContent.trim(), sourceType: "TEXT" }),
+      body: JSON.stringify({
+        title: itemTitle.trim() || undefined,
+        content: itemContent.trim(),
+        sourceType: "TEXT",
+      }),
     });
     const body = (await res.json()) as { ok: boolean; error?: { message?: string } };
     if (!res.ok || !body.ok) {
@@ -269,8 +390,8 @@ export function KnowledgePageClient() {
   }
 
   async function onAddUrlItem() {
-    if (!selectedId || !urlTitle.trim() || !urlValue.trim()) {
-      setError("Укажите название и URL");
+    if (!selectedId || !urlValue.trim()) {
+      setError("Укажите URL");
       return;
     }
     setSaving(true);
@@ -278,7 +399,11 @@ export function KnowledgePageClient() {
     const res = await fetch(`/api/knowledge/${selectedId}/items`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: urlTitle.trim(), sourceType: "URL", sourceUrl: urlValue.trim() }),
+      body: JSON.stringify({
+        title: urlTitle.trim() || undefined,
+        sourceType: "URL",
+        sourceUrl: urlValue.trim(),
+      }),
     });
     const body = (await res.json()) as {
       ok: boolean;
@@ -292,12 +417,104 @@ export function KnowledgePageClient() {
     }
     if (body.data?.urlIngest && !body.data.urlIngest.ok) {
       setError(body.data.urlIngest.message ?? "Страница не загружена — запись сохранена со статусом FAILED");
+    } else {
+      setNotice("Страница загружена и разбита на чанки");
     }
     setUrlTitle("");
     setUrlValue("");
     await loadBases();
     await loadItems(selectedId);
     setSaving(false);
+  }
+
+  async function onBatchImport() {
+    if (!selectedId) return;
+    const urls = batchUrls
+      .split(/\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (urls.length === 0 && !batchSitemap.trim()) {
+      setError("Укажите список URL (по одному на строку) или адрес sitemap.xml");
+      return;
+    }
+    setBatchBusy(true);
+    setError(null);
+    setNotice(null);
+    const res = await fetch(`/api/knowledge/${selectedId}/urls/batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        urls,
+        sitemap: batchSitemap.trim() || undefined,
+      }),
+    });
+    const body = (await res.json()) as {
+      ok: boolean;
+      error?: { message?: string };
+      data?: { total: number; created: number; failed: number; results?: Array<{ ok: boolean; url: string; message?: string }> };
+    };
+    if (!res.ok || !body.ok) {
+      setError(body.error?.message ?? "Пакетный импорт не удался");
+      setBatchBusy(false);
+      return;
+    }
+    const d = body.data!;
+    setNotice(`Импорт: успешно ${d.created}, с ошибками ${d.failed} из ${d.total}.`);
+    if (d.failed > 0 && d.results) {
+      const fails = d.results.filter((r) => !r.ok).slice(0, 5).map((r) => `${r.url}: ${r.message ?? "ошибка"}`).join(" · ");
+      if (fails) setError(`Ошибки: ${fails}`);
+    }
+    setBatchUrls("");
+    setBatchSitemap("");
+    await loadBases();
+    await loadItems(selectedId);
+    setBatchBusy(false);
+  }
+
+  async function onReembed() {
+    if (!selectedId) return;
+    setError(null);
+    setNotice(null);
+    const res = await fetch(`/api/knowledge/${selectedId}/reembed`, { method: "POST" });
+    const body = (await res.json()) as {
+      ok: boolean;
+      error?: { message?: string };
+      data?: { queued: number; totalDocuments: number; missing?: number; message?: string };
+    };
+    if (!res.ok || !body.ok) {
+      setError(body.error?.message ?? "Не удалось поставить пересчёт эмбеддингов");
+      return;
+    }
+    const d = body.data!;
+    if (d.queued === 0) {
+      setNotice(d.message ?? "Все эмбеддинги уже есть");
+    } else {
+      setNotice(`В очередь поставлено ${d.queued} документов (не хватает ${d.missing ?? "—"} векторов). Воркер обработает в фоне.`);
+    }
+  }
+
+  async function onReingestItem(id: string) {
+    if (!selectedId) return;
+    setReingesting(id);
+    setError(null);
+    const res = await fetch(`/api/knowledge/${selectedId}/items/${id}/reingest`, { method: "POST" });
+    const body = (await res.json()) as {
+      ok: boolean;
+      error?: { message?: string };
+      data?: { urlIngest?: { ok: boolean; message?: string } };
+    };
+    if (!res.ok || !body.ok) {
+      setError(body.error?.message ?? "Не удалось переиндексировать");
+      setReingesting(null);
+      return;
+    }
+    if (body.data?.urlIngest && !body.data.urlIngest.ok) {
+      setError(body.data.urlIngest.message ?? "Страница недоступна");
+    } else {
+      setNotice("Запись переиндексирована");
+    }
+    setReingesting(null);
+    await loadItems(selectedId);
   }
 
   async function ingestUploadedFiles(uploaded: Array<{ name: string; url: string; mimeType: string; size: number }>) {
@@ -325,6 +542,8 @@ export function KnowledgePageClient() {
     const errs = body.data?.errors ?? [];
     if (errs.length) {
       setError(`Частично: ${errs.join(" · ")}`);
+    } else {
+      setNotice(`Импортировано файлов: ${body.data?.created ?? 0}`);
     }
     await loadBases();
     await loadItems(selectedId);
@@ -383,6 +602,19 @@ export function KnowledgePageClient() {
     await loadItems(selectedId);
   }
 
+  function updateSettings(patch: Partial<KnowledgeSettings>) {
+    setEditSettings((prev) => ({
+      ...(prev ?? {
+        chunkSize: 1800,
+        chunkOverlap: 200,
+        grounding: "strict",
+        autoTitle: true,
+        maxContextChars: 12000,
+      }),
+      ...patch,
+    }));
+  }
+
   const selected = bases.find((b) => b.id === selectedId);
 
   return (
@@ -391,20 +623,20 @@ export function KnowledgePageClient() {
         <div>
           <h1 className="knowledge-studio-title">База знаний</h1>
           <p className="knowledge-studio-lead">
-            Управление наборами для RAG: файлы разбиваются на фрагменты (чанки), текст и ссылки попадают в контекст
-            ассистента. Подключение — в{" "}
-            <Link href="/assistants" className="knowledge-link">
-              Ассистенты
-            </Link>
-            .{" "}
+            Создавайте базы 3 простыми способами: <strong>файлы</strong>, <strong>готовый текст</strong>,{" "}
+            <strong>ссылки/карта сайта</strong>. Ассистент подключает базу в ответах автоматически.{" "}
             <Link href="/docs/knowledge" className="knowledge-link">
-              Справка и лимиты
+              Как это работает
             </Link>
-            .
+            {" · "}
+            <Link href="/assistants" className="knowledge-link">
+              Подключить к ассистенту
+            </Link>
           </p>
         </div>
       </div>
       {error ? <div className="knowledge-banner-error">{error}</div> : null}
+      {notice ? <div className="knowledge-banner-ok">{notice}</div> : null}
 
       <div className="knowledge-studio-grid">
         <aside className="knowledge-studio-sidebar">
@@ -417,26 +649,10 @@ export function KnowledgePageClient() {
               onChange={(e) => setKbQuery(e.target.value)}
               aria-label="Поиск баз знаний"
             />
-            <button type="button" className="knowledge-btn-new" onClick={() => setCreateOpen((v) => !v)}>
-              {createOpen ? "−" : "+"} Новая
+            <button type="button" className="knowledge-btn-new" onClick={() => (wizardOpen ? setWizardOpen(false) : openWizard())}>
+              {wizardOpen ? "−" : "+"} Новая
             </button>
           </div>
-          {createOpen ? (
-            <div className="knowledge-create-panel">
-              <label>Название</label>
-              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Например: Продукт" />
-              <label>Описание</label>
-              <textarea rows={2} value={newDescription} onChange={(e) => setNewDescription(e.target.value)} />
-              <div className="knowledge-inline-actions">
-                <button type="button" className="knowledge-btn-primary" disabled={saving} onClick={() => void onCreateBase()}>
-                  {saving ? "…" : "Создать"}
-                </button>
-                <button type="button" className="button-ghost" onClick={() => setCreateOpen(false)}>
-                  Отмена
-                </button>
-              </div>
-            </div>
-          ) : null}
           <div className="knowledge-base-list-scroll">
             {loading ? (
               <p className="knowledge-muted-pad">Загрузка…</p>
@@ -449,6 +665,7 @@ export function KnowledgePageClient() {
                     <span className="knowledge-base-row-name">{b.name}</span>
                     <span className="knowledge-base-row-meta">
                       {b.itemCount} матер. · {formatDate(b.updatedAt)}
+                      {b.settings?.template ? ` · ${b.settings.template}` : ""}
                     </span>
                   </button>
                   <button
@@ -467,30 +684,100 @@ export function KnowledgePageClient() {
         </aside>
 
         <main className="knowledge-studio-main">
-          {!selectedId ? (
+          {wizardOpen ? (
+            <div className="knowledge-wizard">
+              <div className="knowledge-wizard-steps">
+                <span className={wizardStep === 1 ? "knowledge-wizard-step-active" : ""}>1. Шаблон</span>
+                <span className={wizardStep === 2 ? "knowledge-wizard-step-active" : ""}>2. Название</span>
+              </div>
+              {wizardStep === 1 ? (
+                <>
+                  <p className="knowledge-hint">
+                    Выберите шаблон — он задаст оптимальные настройки чанкинга и режим ответов ассистента. Все параметры можно
+                    поменять позже.
+                  </p>
+                  <div className="knowledge-templates">
+                    {TEMPLATES.map((t) => (
+                      <button
+                        key={t.code}
+                        type="button"
+                        className={`knowledge-template ${wizardTemplate.code === t.code ? "knowledge-template-active" : ""}`}
+                        onClick={() => pickTemplate(t.code)}
+                      >
+                        <strong>{t.title}</strong>
+                        <small>{t.subtitle}</small>
+                        <em>{t.recommendedFor}</em>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="knowledge-create-panel">
+                  <p className="knowledge-hint">
+                    Шаблон: <strong>{wizardTemplate.title}</strong>.{" "}
+                    <button type="button" className="knowledge-link" onClick={() => setWizardStep(1)}>
+                      изменить
+                    </button>
+                  </p>
+                  <label>Название базы</label>
+                  <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Например: FAQ поддержки" />
+                  <label>Короткое описание (необязательно)</label>
+                  <textarea
+                    rows={2}
+                    value={newDescription}
+                    onChange={(e) => setNewDescription(e.target.value)}
+                    placeholder="О чём эта база, для какого ассистента"
+                  />
+                  <div className="knowledge-inline-actions">
+                    <button
+                      type="button"
+                      className="knowledge-btn-primary"
+                      disabled={saving}
+                      onClick={() => void onCreateBase()}
+                    >
+                      {saving ? "Создание…" : "Создать базу"}
+                    </button>
+                    <button type="button" className="button-ghost" onClick={() => setWizardOpen(false)}>
+                      Отмена
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : !selectedId ? (
             <div className="knowledge-empty-workspace">
-              <p>Выберите базу слева или создайте новую.</p>
-              <details className="knowledge-automation">
-                <summary>Автоматизация и лучшие практики</summary>
-                <ul>
-                  <li>
-                    <strong>Массовый импорт:</strong> перетащите несколько PDF/DOCX/TXT — сервер извлечёт текст и создаст
-                    чанки для поиска в диалоге.
-                  </li>
-                  <li>
-                    <strong>Синхронизация:</strong> позже — webhook или cron, который по расписанию подтягивает
-                    страницы из Confluence/Notion и обновляет базу.
-                  </li>
-                  <li>
-                    <strong>Конвейер:</strong> очередь воркеров для OCR сканов, транскрибации аудио и векторного
-                    индекса (pgvector / отдельный search-сервис).
-                  </li>
-                  <li>
-                    <strong>Качество RAG:</strong> держите фрагменты тематически однородными; для юридических текстов —
-                    отдельная база и отдельный ассистент.
-                  </li>
-                </ul>
-              </details>
+              <h2>Три способа быстро наполнить базу</h2>
+              <div className="knowledge-steps-grid">
+                <div className="knowledge-step-card">
+                  <strong>1. Перетащите файлы</strong>
+                  <p>
+                    PDF, DOCX, TXT, MD, JSON, CSV (до 10 МБ). Текст извлекается автоматически, режется на чанки и попадает в
+                    поиск ассистента.
+                  </p>
+                </div>
+                <div className="knowledge-step-card">
+                  <strong>2. Вставьте готовый текст</strong>
+                  <p>
+                    Инструкции, регламенты, описания. Длинный текст автоматически разбивается на фрагменты. Есть ИИ-подсказка
+                    «разбей на карточки».
+                  </p>
+                </div>
+                <div className="knowledge-step-card">
+                  <strong>3. Добавьте URL или sitemap.xml</strong>
+                  <p>
+                    Одной ссылкой или списком. Сервер загрузит страницу, очистит HTML и сохранит контент. Поддерживается
+                    <strong> пакетный импорт</strong> из sitemap.
+                  </p>
+                </div>
+              </div>
+              <div className="knowledge-inline-actions">
+                <button type="button" className="knowledge-btn-primary" onClick={openWizard}>
+                  Создать базу
+                </button>
+                <Link href="/docs/knowledge" className="button-ghost">
+                  Подробное руководство
+                </Link>
+              </div>
             </div>
           ) : (
             <>
@@ -501,19 +788,87 @@ export function KnowledgePageClient() {
                 </div>
                 <div className="knowledge-workspace-stats">
                   <span className="knowledge-stat-pill">{selected?.itemCount ?? 0} материалов</span>
+                  <button type="button" className="knowledge-btn-secondary knowledge-btn-sm" onClick={() => void onReembed()}>
+                    Пересчитать эмбеддинги
+                  </button>
                 </div>
               </header>
 
               <div className="knowledge-workspace-split">
                 <section className="knowledge-panel">
                   <div className="knowledge-panel-head">
-                    <h3>Настройки</h3>
+                    <h3>Настройки базы</h3>
+                    <button type="button" className="button-ghost" onClick={() => setSettingsOpen((v) => !v)}>
+                      {settingsOpen ? "Скрыть" : "Расширенные"}
+                    </button>
                   </div>
                   <label>Название</label>
                   <input value={editName} onChange={(e) => setEditName(e.target.value)} />
                   <label>Описание</label>
                   <textarea rows={2} value={editDescription} onChange={(e) => setEditDescription(e.target.value)} />
-                  <button type="button" className="knowledge-btn-primary knowledge-btn-sm" disabled={saving} onClick={() => void onUpdateBase()}>
+                  {settingsOpen && editSettings ? (
+                    <div className="knowledge-settings-grid">
+                      <label>
+                        Режим ответов
+                        <select
+                          value={editSettings.grounding}
+                          onChange={(e) => updateSettings({ grounding: e.target.value === "mixed" ? "mixed" : "strict" })}
+                        >
+                          <option value="strict">Строгий — только факты из базы</option>
+                          <option value="mixed">Смешанный — можно дополнять общими знаниями</option>
+                        </select>
+                      </label>
+                      <label>
+                        Размер чанка, символов (300–4000)
+                        <input
+                          type="number"
+                          min={300}
+                          max={4000}
+                          value={editSettings.chunkSize}
+                          onChange={(e) => updateSettings({ chunkSize: Number(e.target.value) })}
+                        />
+                      </label>
+                      <label>
+                        Перекрытие (0–500)
+                        <input
+                          type="number"
+                          min={0}
+                          max={500}
+                          value={editSettings.chunkOverlap}
+                          onChange={(e) => updateSettings({ chunkOverlap: Number(e.target.value) })}
+                        />
+                      </label>
+                      <label>
+                        Макс. контекст, симв. (2000–40000)
+                        <input
+                          type="number"
+                          min={2000}
+                          max={40000}
+                          step={1000}
+                          value={editSettings.maxContextChars}
+                          onChange={(e) => updateSettings({ maxContextChars: Number(e.target.value) })}
+                        />
+                      </label>
+                      <label className="knowledge-settings-check">
+                        <input
+                          type="checkbox"
+                          checked={editSettings.autoTitle}
+                          onChange={(e) => updateSettings({ autoTitle: e.target.checked })}
+                        />
+                        Авто-заголовки для текста/URL
+                      </label>
+                      <p className="knowledge-hint knowledge-settings-note">
+                        После изменения размера чанка новые материалы будут использоваться с новыми настройками. Чтобы
+                        пересчитать уже загруженные — нажмите «Обновить» в строке материала.
+                      </p>
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="knowledge-btn-primary knowledge-btn-sm"
+                    disabled={saving}
+                    onClick={() => void onUpdateBase()}
+                  >
                     {saving ? "…" : "Сохранить"}
                   </button>
                 </section>
@@ -527,7 +882,10 @@ export function KnowledgePageClient() {
                       Текст
                     </button>
                     <button type="button" className={addTab === "url" ? "knowledge-tab-active" : "button-ghost"} onClick={() => setAddTab("url")}>
-                      URL
+                      Одна ссылка
+                    </button>
+                    <button type="button" className={addTab === "batch" ? "knowledge-tab-active" : "button-ghost"} onClick={() => setAddTab("batch")}>
+                      Пакет URL · sitemap
                     </button>
                   </div>
 
@@ -543,8 +901,8 @@ export function KnowledgePageClient() {
                       }}
                     >
                       <p>
-                        <strong>Перетащите файлы</strong> или выберите с диска (до 6 за раз). Поддерживаются PDF, DOCX,
-                        TXT, MD, JSON, CSV (до 10 МБ).
+                        <strong>Перетащите файлы</strong> или выберите с диска (до 6 за раз). PDF, DOCX, TXT, MD, JSON, CSV — до
+                        10 МБ.
                       </p>
                       <input ref={fileRef} type="file" multiple hidden accept=".pdf,.docx,.txt,.md,.csv,.json" onChange={(e) => void uploadFilesList(e.target.files)} />
                       <button type="button" className="knowledge-btn-secondary" disabled={fileBusy} onClick={() => fileRef.current?.click()}>
@@ -555,13 +913,13 @@ export function KnowledgePageClient() {
 
                   {addTab === "text" ? (
                     <div className="knowledge-add-text">
-                      <label>Заголовок</label>
-                      <input value={itemTitle} onChange={(e) => setItemTitle(e.target.value)} placeholder="Тема" />
+                      <label>Заголовок (необязательно — подставим автоматически)</label>
+                      <input value={itemTitle} onChange={(e) => setItemTitle(e.target.value)} placeholder="Авто-заголовок, если пусто" />
                       <label>Текст</label>
-                      <textarea rows={5} value={itemContent} onChange={(e) => setItemContent(e.target.value)} placeholder="Полный текст фрагмента" />
+                      <textarea rows={6} value={itemContent} onChange={(e) => setItemContent(e.target.value)} placeholder="Вставьте готовый фрагмент или черновик" />
                       <div className="knowledge-inline-actions">
                         <button type="button" className="knowledge-btn-secondary knowledge-btn-sm" disabled={suggestBusy} onClick={() => void onSuggestSplit()}>
-                          {suggestBusy ? "ИИ…" : "ИИ: предложить карточки"}
+                          {suggestBusy ? "ИИ…" : "ИИ: разбить на карточки"}
                         </button>
                       </div>
                       {suggestNotice ? <p className="knowledge-hint">{suggestNotice}</p> : null}
@@ -594,15 +952,45 @@ export function KnowledgePageClient() {
                   {addTab === "url" ? (
                     <div className="knowledge-add-url">
                       <p className="knowledge-hint">
-                        Страница загружается на сервере, HTML очищается и режется на чанки (таймаут и лимит размера). Сайты с
+                        Страница загружается на сервере, HTML очищается и режется на чанки (таймаут 18 с, лимит 2 МБ). Сайты с
                         защитой от ботов могут не отдать текст.
                       </p>
-                      <label>Заголовок</label>
-                      <input value={urlTitle} onChange={(e) => setUrlTitle(e.target.value)} />
+                      <label>Заголовок (необязательно)</label>
+                      <input value={urlTitle} onChange={(e) => setUrlTitle(e.target.value)} placeholder="Авто-заголовок, если пусто" />
                       <label>URL</label>
                       <input value={urlValue} onChange={(e) => setUrlValue(e.target.value)} placeholder="https://…" />
                       <button type="button" className="knowledge-btn-primary knowledge-btn-sm" disabled={saving} onClick={() => void onAddUrlItem()}>
                         {saving ? "…" : "Добавить"}
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {addTab === "batch" ? (
+                    <div className="knowledge-add-batch">
+                      <p className="knowledge-hint">
+                        До 40 URL за раз. Поддерживается <code>sitemap.xml</code> — теги <code>&lt;loc&gt;</code> будут
+                        прочитаны автоматически. Дубликаты и некорректные/приватные адреса отфильтровываются.
+                      </p>
+                      <label>Список URL (по одному на строку)</label>
+                      <textarea
+                        rows={6}
+                        value={batchUrls}
+                        onChange={(e) => setBatchUrls(e.target.value)}
+                        placeholder={"https://site.com/docs/one\nhttps://site.com/docs/two"}
+                      />
+                      <label>или sitemap.xml</label>
+                      <input
+                        value={batchSitemap}
+                        onChange={(e) => setBatchSitemap(e.target.value)}
+                        placeholder="https://site.com/sitemap.xml"
+                      />
+                      <button
+                        type="button"
+                        className="knowledge-btn-primary knowledge-btn-sm"
+                        disabled={batchBusy}
+                        onClick={() => void onBatchImport()}
+                      >
+                        {batchBusy ? "Импорт…" : "Импортировать"}
                       </button>
                     </div>
                   ) : null}
@@ -649,6 +1037,17 @@ export function KnowledgePageClient() {
                               {it.document ? <small className="knowledge-doc-status"> {it.document.parsingStatus}</small> : null}
                             </td>
                             <td className="knowledge-td-actions">
+                              {it.sourceType !== "FILE" ? (
+                                <button
+                                  type="button"
+                                  className="button-ghost"
+                                  disabled={reingesting === it.id}
+                                  onClick={() => void onReingestItem(it.id)}
+                                  title="Переиндексировать (URL — перезагрузить, TEXT — перечанковать)"
+                                >
+                                  {reingesting === it.id ? "…" : "Обновить"}
+                                </button>
+                              ) : null}
                               <button type="button" className="button-ghost" disabled={removingItem === it.id} onClick={() => void onDeleteItem(it.id)}>
                                 {removingItem === it.id ? "…" : "Удалить"}
                               </button>

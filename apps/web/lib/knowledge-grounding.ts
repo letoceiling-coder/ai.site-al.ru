@@ -1,14 +1,24 @@
 /** Инструкции к модели: ответы только по фактам из базы, без домыслов. */
 
+export type GroundingMode = "strict" | "mixed";
+
 export function knowledgeContextBlock(kbText: string): string {
   const trimmed = kbText.trim();
   if (!trimmed) {
     return "";
   }
-  return `### Материалы из подключённых баз знаний (единственный допустимый источник фактов)\n${trimmed}`;
+  return `### Материалы из подключённых баз знаний\n${trimmed}`;
 }
 
-export function knowledgeGroundingSystemRules(): string {
+export function knowledgeGroundingSystemRules(mode: GroundingMode = "strict"): string {
+  if (mode === "mixed") {
+    return [
+      "Сначала используй материалы из базы знаний — они считаются основным источником фактов.",
+      "Если в материалах есть ответ — отвечай по ним и указывай это явно.",
+      "Если материалов недостаточно — можешь дополнить ответ общими знаниями, но чётко разграничивай «из базы знаний» и «из общих сведений».",
+      "Не придумывай факты, цифры, даты, названия продуктов, законы и формулировки.",
+    ].join("\n");
+  }
   return [
     "Ты отвечаешь строго по приведённым ниже материалам из базы знаний, если они есть.",
     "Не придумывай факты, цифры, даты, названия продуктов, законы и формулировки, которых нет в материалах.",
@@ -18,11 +28,15 @@ export function knowledgeGroundingSystemRules(): string {
   ].join("\n");
 }
 
-export function buildGroundedSystemPrompt(baseSystem: string, kbText: string): string {
+export function buildGroundedSystemPrompt(
+  baseSystem: string,
+  kbText: string,
+  mode: GroundingMode = "strict",
+): string {
   const base = baseSystem.trim() || "You are a helpful assistant.";
   const block = knowledgeContextBlock(kbText);
   if (!block) {
     return base;
   }
-  return `${base}\n\n${knowledgeGroundingSystemRules()}\n\n${block}`;
+  return `${base}\n\n${knowledgeGroundingSystemRules(mode)}\n\n${block}`;
 }

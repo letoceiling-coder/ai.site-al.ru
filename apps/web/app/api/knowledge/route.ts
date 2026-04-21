@@ -1,8 +1,19 @@
 import { prisma } from "@ai/db";
 import { fail, ok } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
+import {
+  DEFAULT_KNOWLEDGE_SETTINGS,
+  normalizeKnowledgeSettings,
+  settingsFromTemplate,
+} from "@/lib/knowledge-settings";
 
-type CreatePayload = { name?: unknown; description?: unknown; visibility?: unknown };
+type CreatePayload = {
+  name?: unknown;
+  description?: unknown;
+  visibility?: unknown;
+  settings?: unknown;
+  template?: unknown;
+};
 
 export async function GET(request: Request) {
   const auth = await getAuthContext();
@@ -30,7 +41,11 @@ export async function GET(request: Request) {
   const items = await Promise.all(
     rows.map(async (row: (typeof rows)[number]) => {
       const c = await prisma.knowledgeItem.count({ where: { knowledgeBaseId: row.id, tenantId: auth.tenantId } });
-      return { ...row, itemCount: c };
+      return {
+        ...row,
+        settings: normalizeKnowledgeSettings(row.settingsJson),
+        itemCount: c,
+      };
     }),
   );
   return ok({ knowledgeBases: items });
@@ -48,13 +63,26 @@ export async function POST(request: Request) {
   }
   const description = typeof body.description === "string" ? body.description.trim() || null : null;
   const vis = body.visibility === "PUBLIC" || body.visibility === "PRIVATE" ? body.visibility : "PRIVATE";
+
+  const templateCode = typeof body.template === "string" ? body.template.trim().slice(0, 60) : "";
+  const templateDefaults = templateCode ? settingsFromTemplate(templateCode) : {};
+  const userSettings = body.settings && typeof body.settings === "object" ? body.settings : {};
+  const merged = {
+    ...DEFAULT_KNOWLEDGE_SETTINGS,
+    ...templateDefaults,
+    ...(userSettings as object),
+    ...(templateCode ? { template: templateCode } : {}),
+  };
+  const settings = normalizeKnowledgeSettings(merged);
+
   const row = await prisma.knowledgeBase.create({
     data: {
       tenantId: auth.tenantId,
       name,
       description,
       visibility: vis,
+      settingsJson: settings as unknown as object,
     },
   });
-  return ok({ knowledgeBase: row }, 201);
+  return ok({ knowledgeBase: { ...row, settings } }, 201);
 }

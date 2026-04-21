@@ -3,9 +3,14 @@ import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@ai/db";
+import {
+  DEFAULT_KNOWLEDGE_SETTINGS,
+  resolveKnowledgeBaseSettings,
+  type KnowledgeSettings,
+} from "@/lib/knowledge-settings";
 
-const CHUNK_TARGET = 1800;
-const CHUNK_OVERLAP = 200;
+const CHUNK_TARGET = DEFAULT_KNOWLEDGE_SETTINGS.chunkSize;
+const CHUNK_OVERLAP = DEFAULT_KNOWLEDGE_SETTINGS.chunkOverlap;
 const MAX_CHUNKS_PER_DOC = 400;
 
 /** Выше этого размера текстовый фрагмент режется на Document + Chunk, как файлы. */
@@ -26,6 +31,20 @@ export type IngestSource = {
 
 function estimateTokens(text: string) {
   return Math.max(1, Math.ceil(text.length / 4));
+}
+
+/** Авто-заголовок из первого осмысленного предложения. */
+export function deriveTitleFromText(text: string, fallback = "Без названия", maxLen = 80): string {
+  const cleaned = text.replace(/\r\n/g, "\n").trim();
+  if (!cleaned) {
+    return fallback;
+  }
+  const parts = cleaned
+    .split(/[\n.!?](?=\s|$)/)
+    .map((p) => p.trim())
+    .filter((p) => p.length >= 4);
+  const raw = (parts.find((p) => /[A-Za-zА-Яа-я0-9]/.test(p)) ?? cleaned).trim();
+  return raw.length <= maxLen ? raw : `${raw.slice(0, maxLen - 1).trim()}…`;
 }
 
 /** Разбиение текста на перекрывающиеся сегменты для RAG. */
@@ -192,6 +211,7 @@ export async function ingestSourcesToKnowledgeBase(input: {
   tenantId: string;
   knowledgeBaseId: string;
   sources: IngestSource[];
+  settings?: KnowledgeSettings;
 }): Promise<{ created: number; errors: string[] }> {
   const errors: string[] = [];
   let created = 0;
@@ -202,6 +222,8 @@ export async function ingestSourcesToKnowledgeBase(input: {
   if (!base) {
     throw new Error("KNOWLEDGE_BASE_NOT_FOUND");
   }
+  const settings =
+    input.settings ?? (await resolveKnowledgeBaseSettings(input.tenantId, input.knowledgeBaseId));
 
   for (const src of input.sources) {
     const rel = publicPathFromUploadUrl(src.url, input.tenantId);
@@ -238,7 +260,7 @@ export async function ingestSourcesToKnowledgeBase(input: {
       continue;
     }
 
-    const pieces = chunkPlainText(text);
+    const pieces = chunkPlainText(text, settings.chunkSize, settings.chunkOverlap);
     if (pieces.length === 0) {
       errors.push(`${src.name}: не удалось разбить на фрагменты`);
       continue;
@@ -267,6 +289,8 @@ export async function ingestSourcesToKnowledgeBase(input: {
             ingestMs,
             ingestNote: parseNote ?? null,
             parserError: null,
+            chunkSize: settings.chunkSize,
+            chunkOverlap: settings.chunkOverlap,
           } as object,
         },
       });

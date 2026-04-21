@@ -1,9 +1,15 @@
 import { prisma } from "@ai/db";
 import { fail, ok } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
+import { normalizeKnowledgeSettings } from "@/lib/knowledge-settings";
 
 type Ctx = { params: Promise<{ knowledgeBaseId: string }> };
-type UpdatePayload = { name?: unknown; description?: unknown; visibility?: unknown };
+type UpdatePayload = {
+  name?: unknown;
+  description?: unknown;
+  visibility?: unknown;
+  settings?: unknown;
+};
 
 export async function GET(_: Request, context: Ctx) {
   const auth = await getAuthContext();
@@ -18,7 +24,13 @@ export async function GET(_: Request, context: Ctx) {
     return fail("База не найдена", "NOT_FOUND", 404);
   }
   const itemCount = await prisma.knowledgeItem.count({ where: { knowledgeBaseId, tenantId: auth.tenantId } });
-  return ok({ knowledgeBase: { ...row, itemCount } });
+  return ok({
+    knowledgeBase: {
+      ...row,
+      settings: normalizeKnowledgeSettings(row.settingsJson),
+      itemCount,
+    },
+  });
 }
 
 export async function PUT(request: Request, context: Ctx) {
@@ -38,7 +50,12 @@ export async function PUT(request: Request, context: Ctx) {
   if (name === "") {
     return fail("Название не может быть пустым", "VALIDATION_ERROR", 400);
   }
-  const data: { name?: string; description?: string | null; visibility?: "PUBLIC" | "PRIVATE" } = {};
+  const data: {
+    name?: string;
+    description?: string | null;
+    visibility?: "PUBLIC" | "PRIVATE";
+    settingsJson?: object;
+  } = {};
   if (name !== undefined) {
     data.name = name;
   }
@@ -48,11 +65,18 @@ export async function PUT(request: Request, context: Ctx) {
   if (body.visibility === "PUBLIC" || body.visibility === "PRIVATE") {
     data.visibility = body.visibility;
   }
+  if (body.settings && typeof body.settings === "object") {
+    const prev = normalizeKnowledgeSettings(row.settingsJson);
+    const merged = { ...prev, ...(body.settings as object) };
+    data.settingsJson = normalizeKnowledgeSettings(merged) as unknown as object;
+  }
   if (Object.keys(data).length === 0) {
     return fail("Нет полей для обновления", "VALIDATION_ERROR", 400);
   }
   const next = await prisma.knowledgeBase.update({ where: { id: knowledgeBaseId }, data });
-  return ok({ knowledgeBase: next });
+  return ok({
+    knowledgeBase: { ...next, settings: normalizeKnowledgeSettings(next.settingsJson) },
+  });
 }
 
 export async function DELETE(_: Request, context: Ctx) {

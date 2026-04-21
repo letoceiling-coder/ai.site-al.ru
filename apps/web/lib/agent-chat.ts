@@ -1,6 +1,7 @@
 import { prisma } from "@ai/db";
 import { buildKnowledgeContextForBases } from "@/lib/knowledge-context";
 import { buildGroundedSystemPrompt } from "@/lib/knowledge-grounding";
+import { resolveMaxContextCharsForBases } from "@/lib/knowledge-settings";
 import { readFile } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import { decodeSecret } from "@/lib/integrations";
@@ -390,11 +391,19 @@ export async function buildAssistantReply(input: {
       : input.userText;
 
   const kbIds = assistant.knowledgeLinks.map((l: { knowledgeBaseId: string }) => l.knowledgeBaseId);
+  const kbResolved =
+    kbIds.length > 0
+      ? await resolveMaxContextCharsForBases(input.tenantId, kbIds)
+      : { maxChars: 12_000, grounding: "strict" as const };
   const kbText =
     kbIds.length > 0
-      ? await buildKnowledgeContextForBases(input.tenantId, kbIds, input.userText).catch(() => "")
+      ? await buildKnowledgeContextForBases(input.tenantId, kbIds, input.userText, kbResolved.maxChars).catch(() => "")
       : "";
-  const systemForModel = buildGroundedSystemPrompt(`You are agent "${agent.name}".`, kbText);
+  const systemForModel = buildGroundedSystemPrompt(
+    `You are agent "${agent.name}".`,
+    kbText,
+    kbResolved.grounding,
+  );
 
   let result: {
     text: string;
@@ -512,13 +521,18 @@ export async function buildAssistantReplyForUserAssistant(input: {
 
   const model = resolvedModelFromAgent || resolvedModelFromSettings || String(openRouterConfig.model || "gpt-4.1-mini");
   const kbIds = assistant.knowledgeLinks.map((l: { knowledgeBaseId: string }) => l.knowledgeBaseId);
+  const kbResolved =
+    kbIds.length > 0
+      ? await resolveMaxContextCharsForBases(input.tenantId, kbIds)
+      : { maxChars: 12_000, grounding: "strict" as const };
   const kbText = await buildKnowledgeContextForBases(
     input.tenantId,
     kbIds,
     input.userText,
+    kbResolved.maxChars,
   ).catch(() => "");
   const baseSystem = assistant.systemPrompt.trim() || "You are a helpful assistant.";
-  const systemForModel = buildGroundedSystemPrompt(baseSystem, kbText);
+  const systemForModel = buildGroundedSystemPrompt(baseSystem, kbText, kbResolved.grounding);
 
   const preparedAttachments = await toAttachmentPayload(input.tenantId, input.attachments);
   const attachmentSummary = buildAttachmentSummary(preparedAttachments);

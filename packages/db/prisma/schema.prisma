@@ -393,6 +393,8 @@ model KnowledgeBase {
   name        String
   description String?
   visibility  Visibility             @default(PRIVATE)
+  /// Произвольные настройки базы (чанкинг, грунтинг, авто-заголовки, лимит контекста и т.п.).
+  settingsJson Json?
   createdAt   DateTime               @default(now())
   updatedAt   DateTime               @updatedAt
   deletedAt   DateTime?

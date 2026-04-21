@@ -5,10 +5,12 @@ import { getAuthContext } from "@/lib/auth-context";
 import {
   chunkPlainText,
   createDocumentWithChunks,
+  deriveTitleFromText,
   MAX_KNOWLEDGE_TEXT_CHARS,
   TEXT_CHUNK_THRESHOLD,
 } from "@/lib/knowledge-ingest";
 import { processQueuedUrlKnowledgeItem } from "@/lib/url-ingest";
+import { resolveKnowledgeBaseSettings } from "@/lib/knowledge-settings";
 
 type Ctx = { params: Promise<{ knowledgeBaseId: string }> };
 type CreatePayload = { title?: unknown; content?: unknown; sourceType?: unknown; sourceUrl?: unknown };
@@ -61,11 +63,9 @@ export async function POST(request: Request, context: Ctx) {
   if (!base) {
     return fail("База не найдена", "NOT_FOUND", 404);
   }
+  const settings = await resolveKnowledgeBaseSettings(auth.tenantId, knowledgeBaseId);
   const body = (await request.json().catch(() => ({}))) as CreatePayload;
-  const title = typeof body.title === "string" ? body.title.trim() : "";
-  if (!title) {
-    return fail("Укажите заголовок", "VALIDATION_ERROR", 400);
-  }
+  const titleRaw = typeof body.title === "string" ? body.title.trim() : "";
   const st = body.sourceType === "URL" ? "URL" : "TEXT";
   const content = typeof body.content === "string" ? body.content.trim() : "";
   if (st === "TEXT" && !content) {
@@ -79,8 +79,19 @@ export async function POST(request: Request, context: Ctx) {
     return fail("Укажите URL", "VALIDATION_ERROR", 400);
   }
 
+  const title = titleRaw
+    ? titleRaw
+    : st === "TEXT" && settings.autoTitle
+      ? deriveTitleFromText(content, "Текст без заголовка")
+      : st === "URL" && settings.autoTitle && sourceUrl
+        ? titleFromUrl(sourceUrl)
+        : "";
+  if (!title) {
+    return fail("Укажите заголовок", "VALIDATION_ERROR", 400);
+  }
+
   if (st === "TEXT" && content.length > TEXT_CHUNK_THRESHOLD) {
-    const pieces = chunkPlainText(content);
+    const pieces = chunkPlainText(content, settings.chunkSize, settings.chunkOverlap);
     if (pieces.length === 0) {
       return fail("Не удалось разбить текст на фрагменты", "VALIDATION_ERROR", 400);
     }
@@ -97,6 +108,8 @@ export async function POST(request: Request, context: Ctx) {
             chunked: true,
             fullCharCount: content.length,
             chunkCount: pieces.length,
+            chunkSize: settings.chunkSize,
+            chunkOverlap: settings.chunkOverlap,
           } as object,
         },
       });
@@ -149,4 +162,19 @@ export async function POST(request: Request, context: Ctx) {
     },
   });
   return ok({ item }, 201);
+}
+
+function titleFromUrl(u: string): string {
+  try {
+    const url = new URL(u);
+    const last = url.pathname.split("/").filter(Boolean).pop() ?? url.hostname;
+    const pretty = decodeURIComponent(last)
+      .replace(/[-_]+/g, " ")
+      .replace(/\.[a-z0-9]{2,5}$/i, "")
+      .trim();
+    const title = pretty ? `${pretty} — ${url.hostname}` : url.hostname;
+    return title.slice(0, 200);
+  } catch {
+    return u.slice(0, 120);
+  }
 }
