@@ -38,3 +38,4 @@ Multi-tenant SaaS scaffold на React (Next.js) + Prisma + PostgreSQL.
 - IA админки: `docs/ui/information-architecture.md`
 - Интеграции и официальные docs: `docs/integrations/providers.md`
 - Деплой и TLS чеклист: `docs/infra/deploy-and-tls-checklist.md`
+- База знаний (ограничения RAG, URL, pgvector, cron эмбеддингов): `docs/knowledge/limitations-and-mitigations.md`

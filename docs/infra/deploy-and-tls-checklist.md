@@ -27,8 +27,10 @@
 ## Миграции БД (pgvector / RAG)
 
 - Для семантического поиска по базе знаний нужны расширение **pgvector** и миграция `20260221140000_knowledge_chunk_vectors_fts` (столбцы `Chunk.embedding`, `Chunk.content_tsv`, индексы).
-- На сервере: `cd packages/db && npx prisma migrate deploy` (или ваш принятый способ применения миграций).
-- Если `CREATE EXTENSION vector` запрещён роли БД — включите расширение администратором кластера, затем повторите миграцию.
+- На сервере из **корня репозитория** (чтобы подхватился `.env`): `npx prisma migrate deploy --schema packages/db/prisma/schema.prisma`.
+- Установите пакет ОС, например Ubuntu: `apt-get install -y postgresql-16-pgvector` (версия должна совпадать с major PostgreSQL).
+- Если `CREATE EXTENSION vector` запрещён роли приложения — один раз от суперпользователя: `sudo -u postgres psql -d ИМЯ_БД -c 'CREATE EXTENSION IF NOT EXISTS vector;'`, затем снова `migrate deploy`.
+- Воркер эмбеддингов по cron: скрипт `infra/scripts/embedding-worker-cron.sh`, переменные в `.env` — см. `docs/knowledge/limitations-and-mitigations.md`.
 
 ## Post-Deploy Validation
 - Проверить health endpoint.

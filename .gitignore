@@ -14,4 +14,3 @@ yarn.lock
 apps/web/.next
 **/tsconfig.tsbuildinfo
 cookies.txt
-packages/db/prisma/migrations
