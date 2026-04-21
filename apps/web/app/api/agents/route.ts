@@ -6,12 +6,39 @@ type ProviderType = "OPENAI" | "ANTHROPIC" | "GEMINI" | "XAI" | "REPLICATE" | "E
 type AgentStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
 
 const providerDefaults: Record<ProviderType, string[]> = {
-  OPENAI: ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1"],
-  ANTHROPIC: ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"],
-  GEMINI: ["gemini-2.0-flash", "gemini-1.5-pro"],
-  XAI: ["grok-2-1212", "grok-beta"],
-  REPLICATE: ["meta/llama-3.1-8b-instruct", "mistralai/mistral-7b-instruct-v0.2"],
-  ELEVENLABS: ["eleven_multilingual_v2", "eleven_flash_v2_5"],
+  OPENAI: [
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "gpt-4.1-nano",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4-turbo",
+    "gpt-3.5-turbo",
+    "o1",
+    "o1-mini",
+    "o3-mini",
+  ],
+  ANTHROPIC: [
+    "claude-3-7-sonnet-latest",
+    "claude-3-5-sonnet-latest",
+    "claude-3-5-haiku-latest",
+    "claude-3-opus-latest",
+  ],
+  GEMINI: [
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
+  ],
+  XAI: ["grok-3-beta", "grok-2-1212", "grok-2-vision-1212", "grok-beta"],
+  REPLICATE: [
+    "meta/llama-3.1-405b-instruct",
+    "meta/llama-3.1-70b-instruct",
+    "meta/llama-3.1-8b-instruct",
+    "mistralai/mistral-7b-instruct-v0.2",
+  ],
+  ELEVENLABS: ["eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5"],
 };
 
 type AgentPayload = {
@@ -170,7 +197,7 @@ export async function POST(request: Request) {
     return fail("maxTokens должно быть целым числом от 1 до 500000", "VALIDATION_ERROR", 400);
   }
 
-  const status = isAgentStatus(body.status) ? body.status : "DRAFT";
+  const status = isAgentStatus(body.status) ? body.status : "ACTIVE";
 
   const item = await prisma.agent.create({
     data: {

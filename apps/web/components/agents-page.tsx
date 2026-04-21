@@ -55,7 +55,7 @@ const emptyDraft: AgentDraft = {
   model: "",
   temperature: "0.7",
   maxTokens: "",
-  status: "DRAFT",
+  status: "ACTIVE",
 };
 
 function asLocalDate(value: string) {
@@ -77,39 +77,44 @@ export function AgentsPageClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const selectedIntegration = useMemo(
-    () => integrations.find((integration) => integration.id === draft.providerIntegrationId) ?? null,
-    [integrations, draft.providerIntegrationId],
-  );
+  const allModels = useMemo(() => {
+    const merged = new Set<string>();
+    for (const models of Object.values(modelOptions)) {
+      for (const model of models) {
+        if (model.trim()) {
+          merged.add(model.trim());
+        }
+      }
+    }
+    return Array.from(merged).sort((a, b) => a.localeCompare(b));
+  }, [modelOptions]);
 
-  const selectedModels = useMemo(() => {
-    if (!selectedIntegration) {
-      return [];
-    }
-    return modelOptions[selectedIntegration.provider] ?? [];
-  }, [modelOptions, selectedIntegration]);
-
-  function normalizeModel(integrationId: string, nextModel: string, options: Record<string, string[]>) {
-    const integration = integrations.find((item) => item.id === integrationId);
-    if (!integration) {
+  function normalizeModel(nextModel: string, models: string[]) {
+    if (!models.length) {
       return nextModel;
     }
-    const allowed = options[integration.provider] ?? [];
-    if (!allowed.length) {
+    if (models.includes(nextModel)) {
       return nextModel;
     }
-    if (allowed.includes(nextModel)) {
-      return nextModel;
-    }
-    return allowed[0];
+    return models[0];
   }
 
   function resetDraft(defaultIntegrationId?: string, options?: Record<string, string[]>) {
     const integrationId = defaultIntegrationId ?? integrations[0]?.id ?? "";
+    const merged = new Set<string>();
+    const sourceOptions = options ?? modelOptions;
+    for (const models of Object.values(sourceOptions)) {
+      for (const model of models) {
+        if (model.trim()) {
+          merged.add(model.trim());
+        }
+      }
+    }
+    const all = Array.from(merged).sort((a, b) => a.localeCompare(b));
     setDraft({
       ...emptyDraft,
       providerIntegrationId: integrationId,
-      model: normalizeModel(integrationId, "", options ?? modelOptions),
+      model: normalizeModel("", all),
     });
     setEditingId(null);
   }
@@ -134,11 +139,16 @@ export function AgentsPageClient() {
         ...emptyDraft,
         providerIntegrationId: defaultIntegrationId,
         model: (() => {
-          const provider = nextIntegrations[0]?.provider;
-          if (!provider) {
-            return "";
+          const merged = new Set<string>();
+          for (const models of Object.values(nextOptions)) {
+            for (const model of models) {
+              if (model.trim()) {
+                merged.add(model.trim());
+              }
+            }
           }
-          return nextOptions[provider]?.[0] ?? "";
+          const all = Array.from(merged).sort((a, b) => a.localeCompare(b));
+          return all[0] ?? "";
         })(),
       });
     }
@@ -250,7 +260,7 @@ export function AgentsPageClient() {
                 setDraft((prev) => ({
                   ...prev,
                   providerIntegrationId: integrationId,
-                  model: normalizeModel(integrationId, prev.model, modelOptions),
+                  model: normalizeModel(prev.model, allModels),
                 }));
               }}
             >
@@ -266,8 +276,8 @@ export function AgentsPageClient() {
               value={draft.model}
               onChange={(event) => setDraft((prev) => ({ ...prev, model: event.target.value }))}
             >
-              {selectedModels.length ? (
-                selectedModels.map((model) => (
+              {allModels.length ? (
+                allModels.map((model) => (
                   <option key={model} value={model}>
                     {model}
                   </option>
@@ -306,9 +316,8 @@ export function AgentsPageClient() {
               value={draft.status}
               onChange={(event) => setDraft((prev) => ({ ...prev, status: event.target.value as AgentDraft["status"] }))}
             >
-              <option value="DRAFT">Черновик</option>
               <option value="ACTIVE">Активный</option>
-              <option value="ARCHIVED">Архив</option>
+              <option value="ARCHIVED">Неактивный</option>
             </select>
 
             <div className="agent-actions">
@@ -344,7 +353,13 @@ export function AgentsPageClient() {
                 <article key={item.id} className="agent-item">
                   <div className="agent-item-head">
                     <h3>{item.name}</h3>
-                    <span className={`agent-status status-${item.status.toLowerCase()}`}>{item.status}</span>
+                    <span
+                      className={`agent-status ${
+                        item.status === "ACTIVE" ? "status-active" : "status-archived"
+                      }`}
+                    >
+                      {item.status === "ACTIVE" ? "Активный" : "Неактивный"}
+                    </span>
                   </div>
                   <p>{item.description || "Без описания"}</p>
                   <div className="agent-meta">
