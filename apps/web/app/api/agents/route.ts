@@ -159,12 +159,14 @@ export async function GET() {
     model?: string;
     lastTestOk?: boolean;
   };
-  connectedIntegrations.unshift({
-    id: "openrouter",
-    provider: "OPENROUTER",
-    displayName: openrouter.enabled ? "OpenRouter" : "OpenRouter (не подключен)",
-    status: openrouter.enabled ? "ACTIVE" : "DISABLED",
-  });
+  if (openrouter.enabled && openrouter.lastTestOk) {
+    connectedIntegrations.unshift({
+      id: "openrouter",
+      provider: "OPENROUTER",
+      displayName: "OpenRouter",
+      status: "ACTIVE",
+    });
+  }
   const presetModel = typeof openrouter.model === "string" && openrouter.model.trim() ? openrouter.model.trim() : null;
   const base = modelOptions.OPENROUTER ?? providerDefaults.OPENROUTER;
   modelOptions.OPENROUTER = presetModel ? Array.from(new Set([presetModel, ...base])) : base;

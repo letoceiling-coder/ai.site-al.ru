@@ -114,17 +114,18 @@ export function AgentsPageClient() {
   const [voiceStyle, setVoiceStyle] = useState<"neutral" | "calm" | "energetic">("neutral");
   const [listening, setListening] = useState(false);
 
-  const allModels = useMemo(() => {
-    const merged = new Set<string>();
-    for (const models of Object.values(modelOptions)) {
-      for (const model of models) {
-        if (model.trim()) {
-          merged.add(model.trim());
-        }
-      }
+  const selectedIntegration = useMemo(
+    () => integrations.find((integration) => integration.id === draft.providerIntegrationId) ?? null,
+    [integrations, draft.providerIntegrationId],
+  );
+
+  const selectedModels = useMemo(() => {
+    const provider = selectedIntegration?.provider;
+    if (!provider) {
+      return [];
     }
-    return Array.from(merged).sort((a, b) => a.localeCompare(b));
-  }, [modelOptions]);
+    return [...(modelOptions[provider] ?? [])].sort((a, b) => a.localeCompare(b));
+  }, [modelOptions, selectedIntegration]);
 
   function normalizeModel(nextModel: string, models: string[]) {
     if (!models.length) {
@@ -138,20 +139,13 @@ export function AgentsPageClient() {
 
   function resetDraft(defaultIntegrationId?: string, options?: Record<string, string[]>) {
     const integrationId = defaultIntegrationId ?? integrations[0]?.id ?? "";
-    const merged = new Set<string>();
     const sourceOptions = options ?? modelOptions;
-    for (const models of Object.values(sourceOptions)) {
-      for (const model of models) {
-        if (model.trim()) {
-          merged.add(model.trim());
-        }
-      }
-    }
-    const all = Array.from(merged).sort((a, b) => a.localeCompare(b));
+    const integration = integrations.find((item) => item.id === integrationId);
+    const byProvider = integration ? (sourceOptions[integration.provider] ?? []) : [];
     setDraft({
       ...emptyDraft,
       providerIntegrationId: integrationId,
-      model: normalizeModel("", all),
+      model: normalizeModel("", byProvider),
     });
     setEditingId(null);
   }
@@ -176,16 +170,12 @@ export function AgentsPageClient() {
         ...emptyDraft,
         providerIntegrationId: defaultIntegrationId,
         model: (() => {
-          const merged = new Set<string>();
-          for (const models of Object.values(nextOptions)) {
-            for (const model of models) {
-              if (model.trim()) {
-                merged.add(model.trim());
-              }
-            }
+          const provider = nextIntegrations[0]?.provider;
+          if (!provider) {
+            return "";
           }
-          const all = Array.from(merged).sort((a, b) => a.localeCompare(b));
-          return all[0] ?? "";
+          const providerModels = nextOptions[provider] ?? [];
+          return providerModels[0] ?? "";
         })(),
       });
     }
@@ -546,13 +536,19 @@ export function AgentsPageClient() {
                 setDraft((prev) => ({
                   ...prev,
                   providerIntegrationId: integrationId,
-                  model: normalizeModel(prev.model, allModels),
+                  model: normalizeModel(
+                    prev.model,
+                    (() => {
+                      const integration = integrations.find((item) => item.id === integrationId);
+                      return integration ? (modelOptions[integration.provider] ?? []) : [];
+                    })(),
+                  ),
                 }));
               }}
             >
               {integrations.map((integration) => (
                 <option key={integration.id} value={integration.id}>
-                  {integration.displayName} ({integration.provider})
+                  {integration.displayName}
                 </option>
               ))}
             </select>
@@ -562,8 +558,8 @@ export function AgentsPageClient() {
               value={draft.model}
               onChange={(event) => setDraft((prev) => ({ ...prev, model: event.target.value }))}
             >
-              {allModels.length ? (
-                allModels.map((model) => (
+              {selectedModels.length ? (
+                selectedModels.map((model) => (
                   <option key={model} value={model}>
                     {model}
                   </option>
