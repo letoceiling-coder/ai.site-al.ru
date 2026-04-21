@@ -31,6 +31,7 @@
 - Установите пакет ОС, например Ubuntu: `apt-get install -y postgresql-16-pgvector` (версия должна совпадать с major PostgreSQL).
 - Если `CREATE EXTENSION vector` запрещён роли приложения — один раз от суперпользователя: `sudo -u postgres psql -d ИМЯ_БД -c 'CREATE EXTENSION IF NOT EXISTS vector;'`, затем снова `migrate deploy`.
 - Воркер эмбеддингов по cron: скрипт `infra/scripts/embedding-worker-cron.sh`, переменные в `.env` — см. `docs/knowledge/limitations-and-mitigations.md`.
+- Переменные окружения лежат **только** в корневом `/var/www/ai.site-al.ru/.env` (правятся по SSH, в git не коммитятся). Next подхватывает их автоматически через `apps/web/scripts/start-with-root-env.js` — никаких копий `apps/web/.env*` заводить не нужно.
 
 ## Post-Deploy Validation
 - Проверить health endpoint.

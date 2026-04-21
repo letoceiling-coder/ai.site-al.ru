@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Вызывайте из cron (раз в 1–5 минут). Читает EMBEDDING_WORKER_SECRET из корневого .env репозитория.
-# Убедитесь, что тот же секрет доступен процессу Next (см. apps/web/.env.production.local в документации).
+# Процессу Next тот же секрет доступен автоматически через apps/web/scripts/start-with-root-env.js.
 set -euo pipefail
 ROOT="${AI_SITE_AL_ROOT:-/var/www/ai.site-al.ru}"
 ENV_FILE="$ROOT/.env"
