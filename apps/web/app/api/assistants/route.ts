@@ -137,30 +137,43 @@ export async function POST(request: Request) {
   if (!systemPrompt) {
     return fail("Поле «Системный промпт» обязательно", "VALIDATION_ERROR", 400);
   }
-  const providerIntegrationId =
-    typeof body.providerIntegrationId === "string" ? body.providerIntegrationId.trim() : "";
-  if (!providerIntegrationId) {
-    return fail("Выберите интеграцию провайдера", "VALIDATION_ERROR", 400);
-  }
 
-  const resolved = await resolveRealIntegrationId(auth.tenantId, providerIntegrationId);
-  if (!resolved.ok) {
-    return resolved.response;
-  }
+  const rawAgentId =
+    body.agentId !== undefined && body.agentId !== null && String(body.agentId).trim() !== ""
+      ? String(body.agentId).trim()
+      : null;
 
   let agentId: string | null = null;
-  if (body.agentId !== undefined && body.agentId !== null && body.agentId !== "") {
-    if (typeof body.agentId !== "string") {
-      return fail("Некорректный идентификатор агента", "VALIDATION_ERROR", 400);
-    }
+  let resolved: { ok: true; id: string; useOpenRouter: boolean } | { ok: false; response: ReturnType<typeof fail> };
+  if (rawAgentId) {
     const agent = await prisma.agent.findFirst({
-      where: { id: body.agentId.trim(), tenantId: auth.tenantId, deletedAt: null },
-      select: { id: true },
+      where: { id: rawAgentId, tenantId: auth.tenantId, deletedAt: null },
+      select: { id: true, providerIntegrationId: true },
     });
     if (!agent) {
       return fail("Агент не найден", "NOT_FOUND", 404);
     }
     agentId = agent.id;
+    resolved = await resolveRealIntegrationId(auth.tenantId, agent.providerIntegrationId);
+  } else {
+    const providerIntegrationId =
+      typeof body.providerIntegrationId === "string" ? body.providerIntegrationId.trim() : "";
+    if (!providerIntegrationId) {
+      return fail("Выберите агента или укажите интеграцию и модель", "VALIDATION_ERROR", 400);
+    }
+    const modelTrim = typeof body.model === "string" ? body.model.trim() : "";
+    if (!modelTrim) {
+      return fail("Без агента необходимо выбрать модель (интеграция + модель)", "VALIDATION_ERROR", 400);
+    }
+    const r = await resolveRealIntegrationId(auth.tenantId, providerIntegrationId);
+    if (!r.ok) {
+      return r.response;
+    }
+    resolved = r;
+  }
+
+  if (!resolved.ok) {
+    return resolved.response;
   }
 
   const status = isAssistantStatus(body.status) ? body.status : "ACTIVE";
@@ -174,13 +187,15 @@ export async function POST(request: Request) {
     }
   }
 
-  const modelTrim = typeof body.model === "string" ? body.model.trim() : "";
+  const modelFromBody = typeof body.model === "string" ? body.model.trim() : "";
   const settingsJson: Record<string, unknown> = {};
   if (resolved.useOpenRouter) {
     settingsJson.useOpenRouter = true;
   }
-  if (modelTrim) {
-    settingsJson.model = modelTrim;
+  if (agentId) {
+    // Режим с агентом: интеграция и модель агента; не храним model в settingsJson
+  } else if (modelFromBody) {
+    settingsJson.model = modelFromBody;
   }
 
   const item = await prisma.assistant.create({

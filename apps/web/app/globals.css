@@ -444,6 +444,48 @@ button:disabled {
   color: var(--muted);
 }
 
+.agents-list--tight {
+  max-height: min(64vh, 640px);
+}
+
+.agents-list--empty {
+  max-height: none;
+  min-height: auto;
+  align-self: start;
+}
+
+.assistants-routing {
+  border-top: 1px solid var(--line);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.assistants-routing .assistants-hint {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.assistants-kb-compact {
+  max-height: 120px;
+}
+
+.agent-form--compact h3 {
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.agent-form--compact label {
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.agent-form--compact textarea {
+  min-height: 0;
+}
+
 .agent-item {
   border: 1px solid var(--line);
   border-radius: 12px;

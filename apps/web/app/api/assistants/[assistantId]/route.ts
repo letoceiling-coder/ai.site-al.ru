@@ -129,38 +129,59 @@ export async function PUT(request: Request, context: Context) {
     data.status = body.status;
   }
 
-  if (typeof body.providerIntegrationId === "string") {
+  const currentSettings = (existing.settingsJson ?? {}) as Record<string, unknown>;
+
+  if (body.agentId !== undefined) {
+    const raw = typeof body.agentId === "string" ? body.agentId.trim() : "";
+    if (raw) {
+      const agent = await prisma.agent.findFirst({
+        where: { id: raw, tenantId: auth.tenantId, deletedAt: null },
+        select: { id: true, providerIntegrationId: true },
+      });
+      if (!agent) {
+        return fail("Агент не найден", "NOT_FOUND", 404);
+      }
+      const resolved = await resolveRealIntegrationId(auth.tenantId, agent.providerIntegrationId);
+      if (!resolved.ok) {
+        return resolved.response;
+      }
+      data.providerIntegrationId = resolved.id;
+      data.agentId = agent.id;
+      const { model: _drop, ...rest } = currentSettings;
+      data.settingsJson = { ...rest, useOpenRouter: resolved.useOpenRouter };
+    } else {
+      const providerIntegrationId =
+        typeof body.providerIntegrationId === "string" ? body.providerIntegrationId.trim() : "";
+      const modelTrim = typeof body.model === "string" ? body.model.trim() : "";
+      if (!providerIntegrationId) {
+        return fail("Без агента укажите интеграцию", "VALIDATION_ERROR", 400);
+      }
+      if (!modelTrim) {
+        return fail("Без агента укажите модель", "VALIDATION_ERROR", 400);
+      }
+      const resolved = await resolveRealIntegrationId(auth.tenantId, providerIntegrationId);
+      if (!resolved.ok) {
+        return resolved.response;
+      }
+      data.providerIntegrationId = resolved.id;
+      data.agentId = null;
+      data.settingsJson = { ...currentSettings, useOpenRouter: resolved.useOpenRouter, model: modelTrim };
+    }
+  } else if (typeof body.providerIntegrationId === "string") {
     const resolved = await resolveRealIntegrationId(auth.tenantId, body.providerIntegrationId.trim());
     if (!resolved.ok) {
       return resolved.response;
     }
     data.providerIntegrationId = resolved.id;
-    const currentSettings = (existing.settingsJson ?? {}) as Record<string, unknown>;
     data.settingsJson = {
-      ...currentSettings,
+      ...(data.settingsJson ?? currentSettings),
       useOpenRouter: resolved.useOpenRouter,
     };
   }
 
-  if (body.agentId !== undefined) {
-    if (body.agentId === null || body.agentId === "") {
-      data.agentId = null;
-    } else if (typeof body.agentId === "string") {
-      const agent = await prisma.agent.findFirst({
-        where: { id: body.agentId.trim(), tenantId: auth.tenantId, deletedAt: null },
-        select: { id: true },
-      });
-      if (!agent) {
-        return fail("Агент не найден", "NOT_FOUND", 404);
-      }
-      data.agentId = agent.id;
-    } else {
-      return fail("Некорректный идентификатор агента", "VALIDATION_ERROR", 400);
-    }
-  }
-
-  if (typeof body.model === "string") {
-    const cur = { ...((existing.settingsJson ?? {}) as Record<string, unknown>) };
+  if (body.agentId === undefined && typeof body.model === "string") {
+    const base = (data.settingsJson ?? currentSettings) as Record<string, unknown>;
+    const cur = { ...base };
     const m = body.model.trim();
     if (m) {
       cur.model = m;

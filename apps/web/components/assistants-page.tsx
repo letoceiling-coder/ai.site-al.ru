@@ -46,6 +46,16 @@ const emptyDraft = {
   knowledgeBaseIds: [] as string[],
 };
 
+function normalizeModel(nextModel: string, models: string[]) {
+  if (!models.length) {
+    return nextModel;
+  }
+  if (models.includes(nextModel)) {
+    return nextModel;
+  }
+  return models[0] ?? "";
+}
+
 function asLocalDate(value: string) {
   const dt = new Date(value);
   if (Number.isNaN(dt.getTime())) {
@@ -98,6 +108,8 @@ export function AssistantsPageClient() {
     return [...(modelOptions[provider] ?? [])].sort((a, b) => a.localeCompare(b));
   }, [modelOptions, selectedIntegration]);
 
+  const hasAgent = Boolean(draft.agentId.trim());
+
   async function load() {
     setLoading(true);
     const response = await fetch("/api/assistants");
@@ -139,12 +151,17 @@ export function AssistantsPageClient() {
           integrations.find((i) => i.provider === item.providerIntegration.provider)?.id ??
           firstId;
       const s = (item.settingsJson ?? {}) as { model?: string };
+      const intForModels = integrations.find((i) => i.id === providerId);
+      const models = intForModels
+        ? [...(modelOptions[intForModels.provider] ?? [])].sort((a, b) => a.localeCompare(b))
+        : [];
+      const modelStored = typeof s.model === "string" ? s.model : "";
       setDraft({
         name: item.name,
         systemPrompt: item.systemPrompt,
         providerIntegrationId: providerId,
         agentId: item.agentId ?? "",
-        model: typeof s.model === "string" ? s.model : "",
+        model: item.agentId ? "" : normalizeModel(modelStored, models) || (models[0] ?? ""),
         status: item.status,
         knowledgeBaseIds: item.knowledgeLinks.map((l) => l.knowledgeBaseId),
       });
@@ -158,15 +175,21 @@ export function AssistantsPageClient() {
       if (!def) {
         return prev;
       }
-      return { ...emptyDraft, model: "", providerIntegrationId: def };
+      const pro = integrations[0]!.provider;
+      const mlist = [...(modelOptions[pro] ?? [])].sort((a, b) => a.localeCompare(b));
+      return { ...emptyDraft, model: mlist[0] ?? "", providerIntegrationId: def };
     });
-  }, [editingId, items, integrations]);
+  }, [editingId, items, integrations, modelOptions]);
 
   function resetForm() {
     setEditingId(null);
+    const def = integrations[0]?.id ?? "";
+    const pro = integrations[0]?.provider;
+    const mlist = pro ? [...(modelOptions[pro] ?? [])].sort((a, b) => a.localeCompare(b)) : [];
     setDraft({
       ...emptyDraft,
-      providerIntegrationId: integrations[0]?.id ?? "",
+      providerIntegrationId: def,
+      model: mlist[0] ?? "",
     });
   }
 
@@ -190,15 +213,31 @@ export function AssistantsPageClient() {
   async function onSubmit() {
     setSaving(true);
     setError(null);
-    const payload = {
+    const linked = draft.agentId.trim();
+    if (!draft.providerIntegrationId.trim() && !linked) {
+      setError("Укажите агента или выберите интеграцию с моделью");
+      setSaving(false);
+      return;
+    }
+    if (!linked && !draft.model.trim()) {
+      setError("Без агента выберите модель");
+      setSaving(false);
+      return;
+    }
+    const payload: Record<string, unknown> = {
       name: draft.name.trim(),
       systemPrompt: draft.systemPrompt.trim(),
-      providerIntegrationId: draft.providerIntegrationId,
-      agentId: draft.agentId.trim() || null,
-      model: draft.model.trim() || undefined,
+      agentId: linked || null,
       status: draft.status,
       knowledgeBaseIds: draft.knowledgeBaseIds,
     };
+    if (linked) {
+      payload.providerIntegrationId = "";
+      payload.model = "";
+    } else {
+      payload.providerIntegrationId = draft.providerIntegrationId;
+      payload.model = draft.model.trim();
+    }
     if (!payload.name) {
       setError("Укажите наименование");
       setSaving(false);
@@ -206,11 +245,6 @@ export function AssistantsPageClient() {
     }
     if (!payload.systemPrompt) {
       setError("Укажите системный промпт");
-      setSaving(false);
-      return;
-    }
-    if (!payload.providerIntegrationId) {
-      setError("Выберите интеграцию");
       setSaving(false);
       return;
     }
@@ -252,10 +286,10 @@ export function AssistantsPageClient() {
     <section className="card agents-crm" data-testid="assistants-page">
       <div className="agents-crm-top">
         <div>
-          <h1 style={{ marginBottom: 6 }}>Ассистенты</h1>
-          <p style={{ marginTop: 0, color: "var(--muted)" }}>
-            Системный промпт, интеграция, привязка к агенту и к базам знаний, тестовый чат с потоковым ответом.
-            Убедитесь, что на сервере задеплоена последняя версия: страница без вкладок — старая сборка.
+          <h1 style={{ marginBottom: 4 }}>Ассистенты</h1>
+          <p style={{ marginTop: 0, marginBottom: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.45 }}>
+            Системный промпт, тестовый чат, базы знаний. Укажите агента — или интеграцию и модель
+            (как в разделе «Агенты»).
           </p>
         </div>
         <div className="crm-tabs">
@@ -330,7 +364,7 @@ export function AssistantsPageClient() {
 
       {integrations.length > 0 && viewTab === "manage" ? (
         <div className="agents-layout">
-          <div className="agent-form">
+          <div className="agent-form agent-form--compact">
             <h3>{editingId ? "Редактирование" : "Создание ассистента"}</h3>
             <label>Наименование</label>
             <input
@@ -340,52 +374,95 @@ export function AssistantsPageClient() {
             />
             <label>Системный промпт</label>
             <textarea
-              rows={5}
+              rows={4}
               value={draft.systemPrompt}
               onChange={(e) => setDraft((d) => ({ ...d, systemPrompt: e.target.value }))}
               placeholder="Роль, стиль ответа, ограничения"
             />
-            <label>Интеграция</label>
-            <select
-              value={draft.providerIntegrationId}
-              onChange={(e) => setDraft((d) => ({ ...d, providerIntegrationId: e.target.value }))}
-            >
-              {integrations.map((i) => (
-                <option key={i.id} value={i.id}>
-                  {i.displayName}
-                </option>
-              ))}
-            </select>
-            {selectedModels.length > 0 ? (
-              <p className="assistants-hint" style={{ margin: "0 0 8px", fontSize: 12, color: "var(--muted)" }}>
-                Каталог: {selectedModels.slice(0, 8).join(", ")}
-                {selectedModels.length > 8 ? "…" : ""}
-              </p>
-            ) : null}
-            <label>Модель (если агент не привязан)</label>
-            <input
-              value={draft.model}
-              onChange={(e) => setDraft((d) => ({ ...d, model: e.target.value }))}
-              placeholder="Напр. gpt-4.1-mini (иначе используется модель агента)"
-            />
-            <label>Агент (опционально)</label>
-            <select
-              value={draft.agentId}
-              onChange={(e) => setDraft((d) => ({ ...d, agentId: e.target.value }))}
-            >
-              <option value="">Без привязки</option>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name} · {a.model}
-                </option>
-              ))}
-            </select>
+            <div className="assistants-routing">
+              <label>Агент</label>
+              <select
+                value={draft.agentId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v) {
+                    setDraft((d) => ({ ...d, agentId: v }));
+                    return;
+                  }
+                  const def = integrations[0]?.id ?? "";
+                  const integ = integrations.find((i) => i.id === def) ?? integrations[0];
+                  const mlist = integ
+                    ? [...(modelOptions[integ.provider] ?? [])].sort((a, b) => a.localeCompare(b))
+                    : [];
+                  setDraft((d) => ({
+                    ...d,
+                    agentId: "",
+                    providerIntegrationId: def || d.providerIntegrationId,
+                    model: normalizeModel(d.model, mlist) || mlist[0] || "",
+                  }));
+                }}
+              >
+                <option value="">— Нет, выбрать интеграцию и модель ниже</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} · {a.model}
+                  </option>
+                ))}
+              </select>
+              {hasAgent ? (
+                <p className="assistants-hint">Интеграция и модель берутся с выбранного агента.</p>
+              ) : (
+                <p className="assistants-hint">Для теста без агента задайте интеграцию и модель.</p>
+              )}
+
+              {!hasAgent ? (
+                <>
+                  <label>Интеграция</label>
+                  <select
+                    value={draft.providerIntegrationId}
+                    onChange={(e) => {
+                      const integrationId = e.target.value;
+                      setDraft((prev) => ({
+                        ...prev,
+                        providerIntegrationId: integrationId,
+                        model: normalizeModel(
+                          prev.model,
+                          (() => {
+                            const it = integrations.find((x) => x.id === integrationId);
+                            return it ? (modelOptions[it.provider] ?? []) : [];
+                          })(),
+                        ),
+                      }));
+                    }}
+                  >
+                    {integrations.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {i.displayName}
+                      </option>
+                    ))}
+                  </select>
+                  <label>Модель</label>
+                  <select
+                    value={draft.model}
+                    onChange={(e) => setDraft((d) => ({ ...d, model: e.target.value }))}
+                  >
+                    {selectedModels.length ? (
+                      selectedModels.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">Нет моделей</option>
+                    )}
+                  </select>
+                </>
+              ) : null}
+            </div>
             <label>Статус</label>
             <select
               value={draft.status}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, status: e.target.value as DraftStatus }))
-              }
+              onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value as DraftStatus }))}
             >
               <option value="ACTIVE">Активный</option>
               <option value="DRAFT">Черновик</option>
@@ -393,13 +470,17 @@ export function AssistantsPageClient() {
             </select>
             <label>Базы знаний</label>
             {knowledgeBases.length === 0 ? (
-              <p style={{ fontSize: 13, color: "var(--muted)" }}>
-                Сначала создайте базу знаний в разделе «База знаний», затем отметьте её здесь.
+              <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 4px" }}>
+                Создайте базу в «База знаний», затем отметьте здесь.
               </p>
             ) : (
-              <div className="assistant-kb-list" role="group" aria-label="Базы знаний">
+              <div
+                className="assistant-kb-list assistants-kb-compact"
+                role="group"
+                aria-label="Базы знаний"
+              >
                 {knowledgeBases.map((kb) => (
-                  <label key={kb.id} className="integration-toggle" style={{ display: "flex", marginBottom: 4 }}>
+                  <label key={kb.id} className="integration-toggle" style={{ display: "flex", marginBottom: 2 }}>
                     <input
                       type="checkbox"
                       checked={draft.knowledgeBaseIds.includes(kb.id)}
@@ -410,7 +491,7 @@ export function AssistantsPageClient() {
                 ))}
               </div>
             )}
-            <div className="agent-actions" style={{ marginTop: 10 }}>
+            <div className="agent-actions" style={{ marginTop: 8 }}>
               <button type="button" disabled={saving} onClick={() => void onSubmit()}>
                 {saving ? "Сохранение…" : editingId ? "Обновить" : "Создать"}
               </button>
@@ -422,7 +503,11 @@ export function AssistantsPageClient() {
             </div>
           </div>
 
-          <div className="agents-list">
+          <div
+            className={`agents-list ${
+              items.length > 0 ? "agents-list--tight" : "agents-list--empty"
+            }`}
+          >
             <div className="agents-list-header">
               <strong>Реестр</strong>
               <span>{items.length} шт.</span>
@@ -448,7 +533,16 @@ export function AssistantsPageClient() {
                     <p className="assistant-prompt-preview">{item.systemPrompt.slice(0, 200)}{item.systemPrompt.length > 200 ? "…" : ""}</p>
                     <div className="agent-meta">
                       <span>Интеграция: {integrationLabel(item)}</span>
-                      {item.agent ? <span>Агент: {item.agent.name}</span> : <span>Агент: —</span>}
+                      {item.agent ? (
+                        <span>Агент: {item.agent.name}</span>
+                      ) : (
+                        <span>
+                          Модель:{" "}
+                          {typeof (item.settingsJson as { model?: string } | null)?.model === "string"
+                            ? (item.settingsJson as { model: string }).model
+                            : "—"}
+                        </span>
+                      )}
                       <span>v{item.version}</span>
                       <span>Баз знаний: {item.knowledgeLinks.length}</span>
                       <span>Обновлён: {asLocalDate(item.updatedAt)}</span>
