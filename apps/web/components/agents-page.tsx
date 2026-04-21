@@ -113,6 +113,7 @@ export function AgentsPageClient() {
   const [voiceGender, setVoiceGender] = useState<"female" | "male">("female");
   const [voiceStyle, setVoiceStyle] = useState<"neutral" | "calm" | "energetic">("neutral");
   const [listening, setListening] = useState(false);
+  const [chatTab, setChatTab] = useState<"agents" | "chat">("chat");
 
   const selectedIntegration = useMemo(
     () => integrations.find((integration) => integration.id === draft.providerIntegrationId) ?? null,
@@ -626,6 +627,10 @@ export function AgentsPageClient() {
           </div>
 
           <div className="agents-list">
+            <div className="agents-list-header">
+              <strong>Список агентов</strong>
+              <span>{items.length} шт.</span>
+            </div>
             {loading ? (
               <p>Загрузка...</p>
             ) : items.length === 0 ? (
@@ -633,23 +638,25 @@ export function AgentsPageClient() {
             ) : (
               items.map((item) => (
                 <article key={item.id} className="agent-item">
-                  <div className="agent-item-head">
-                    <h3>{item.name}</h3>
-                    <span
-                      className={`agent-status ${
-                        item.status === "ACTIVE" ? "status-active" : "status-archived"
-                      }`}
-                    >
-                      {item.status === "ACTIVE" ? "Активный" : "Неактивный"}
-                    </span>
-                  </div>
-                  <p>{item.description || "Без описания"}</p>
-                  <div className="agent-meta">
-                    <span>Провайдер: {item.providerIntegration.displayName}</span>
-                    <span>Модель: {item.model}</span>
-                    <span>Temp: {item.temperature}</span>
-                    <span>Max tokens: {item.maxTokens ?? "—"}</span>
-                    <span>Обновлен: {asLocalDate(item.updatedAt)}</span>
+                  <div className="agent-item-main">
+                    <div className="agent-item-head">
+                      <h3>{item.name}</h3>
+                      <span
+                        className={`agent-status ${
+                          item.status === "ACTIVE" ? "status-active" : "status-archived"
+                        }`}
+                      >
+                        {item.status === "ACTIVE" ? "Активный" : "Неактивный"}
+                      </span>
+                    </div>
+                    <p>{item.description || "Без описания"}</p>
+                    <div className="agent-meta">
+                      <span>Интеграция: {item.providerIntegration.displayName}</span>
+                      <span>Модель: {item.model}</span>
+                      <span>Temp: {item.temperature}</span>
+                      <span>Max tokens: {item.maxTokens ?? "—"}</span>
+                      <span>Обновлен: {asLocalDate(item.updatedAt)}</span>
+                    </div>
                   </div>
                   <div className="agent-item-actions">
                     <button
@@ -681,6 +688,27 @@ export function AgentsPageClient() {
       )}
 
       <div className="agent-chat card" style={{ marginTop: 16 }}>
+        <div className="agent-chat-tabs">
+          <button
+            type="button"
+            className={`button-ghost ${chatTab === "agents" ? "tab-active" : ""}`}
+            onClick={() => setChatTab("agents")}
+          >
+            Агенты
+          </button>
+          <button
+            type="button"
+            className={`button-ghost ${chatTab === "chat" ? "tab-active" : ""}`}
+            onClick={() => setChatTab("chat")}
+          >
+            Чаты
+          </button>
+        </div>
+        {chatTab === "agents" ? (
+          <p style={{ margin: "8px 0 0", color: "#6b7280" }}>
+            Переключайтесь между агентами в списке сверху и нажимайте «Тест чат» для быстрого запуска.
+          </p>
+        ) : null}
         <div className="agent-chat-header">
           <h3 style={{ margin: 0 }}>Тест чат агента</h3>
           <select
@@ -696,7 +724,7 @@ export function AgentsPageClient() {
             ))}
           </select>
         </div>
-        {activeAgent ? (
+        {activeAgent && chatTab === "chat" ? (
           <>
             <p style={{ marginTop: 8, color: "#6b7280" }}>
               Интеграция: {activeAgent.providerIntegration.displayName} | Модель: {activeAgent.model}
@@ -793,9 +821,9 @@ export function AgentsPageClient() {
               {chatError ? <p style={{ color: "crimson" }}>{chatError}</p> : null}
             </div>
           </>
-        ) : (
+        ) : chatTab === "chat" ? (
           <p style={{ color: "#6b7280" }}>Выберите агента для тестового чата.</p>
-        )}
+        ) : null}
       </div>
     </section>
   );

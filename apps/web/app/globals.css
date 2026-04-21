@@ -274,19 +274,44 @@ button:disabled {
 .agents-list {
   display: grid;
   gap: 10px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.agents-list-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.agents-list-header span {
+  color: var(--muted);
 }
 
 .agent-item {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: #fff;
-  padding: 14px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
 }
 
 .agent-item p {
   margin-top: 0;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   color: #374151;
+  font-size: 13px;
 }
 
 .agent-item-head {
@@ -294,25 +319,33 @@ button:disabled {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .agent-item-head h3 {
   margin: 0;
+  font-size: 16px;
 }
 
 .agent-meta {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px 10px;
-  font-size: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px 10px;
+  font-size: 11px;
   color: var(--muted);
 }
 
 .agent-item-actions {
-  margin-top: 12px;
+  margin-top: 0;
   display: flex;
+  flex-direction: column;
   gap: 8px;
+  min-width: 124px;
+}
+
+.agent-item-actions button {
+  padding: 8px 10px;
+  font-size: 12px;
 }
 
 .agent-status {
@@ -486,6 +519,17 @@ button:disabled {
   gap: 10px;
 }
 
+.agent-chat-tabs {
+  display: inline-flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.agent-chat-tabs .tab-active {
+  background: #111827;
+  color: #fff;
+}
+
 .agent-voice-controls {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -577,5 +621,18 @@ button:disabled {
   .agent-chat-header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .agent-item {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-item-actions {
+    flex-direction: row;
+    min-width: 0;
   }
 }

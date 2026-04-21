@@ -7,6 +7,47 @@ type Context = {
   params: Promise<{ agentId: string }>;
 };
 
+export async function GET(_: Request, context: Context) {
+  const auth = await getAuthContext();
+  if (!auth) {
+    return fail("Unauthorized", "UNAUTHORIZED", 401);
+  }
+
+  const { agentId } = await context.params;
+  const linked = await ensureAssistantForAgent(auth.tenantId, auth.userId, agentId);
+  if (!linked) {
+    return fail("Агент не найден", "NOT_FOUND", 404);
+  }
+
+  const dialogs = await prisma.dialog.findMany({
+    where: {
+      tenantId: auth.tenantId,
+      assistantId: linked.assistant.id,
+      metadata: {
+        path: ["agentId"],
+        equals: linked.agent.id,
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 50,
+    select: {
+      id: true,
+      status: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  return ok({
+    sessions: dialogs.map((dialog: { id: string; status: string; createdAt: Date; updatedAt: Date }) => ({
+      id: dialog.id,
+      status: dialog.status,
+      createdAt: dialog.createdAt.toISOString(),
+      updatedAt: dialog.updatedAt.toISOString(),
+    })),
+  });
+}
+
 export async function POST(_: Request, context: Context) {
   const auth = await getAuthContext();
   if (!auth) {
