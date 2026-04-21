@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
 type IntegrationOption = {
   id: string;
@@ -63,6 +63,13 @@ type UploadResponse = {
   error?: { message?: string };
 };
 
+type ChatSession = {
+  id: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type AgentDraft = {
   name: string;
   description: string;
@@ -113,7 +120,12 @@ export function AgentsPageClient() {
   const [voiceGender, setVoiceGender] = useState<"female" | "male">("female");
   const [voiceStyle, setVoiceStyle] = useState<"neutral" | "calm" | "energetic">("neutral");
   const [listening, setListening] = useState(false);
-  const [chatTab, setChatTab] = useState<"agents" | "chat">("chat");
+  const [viewTab, setViewTab] = useState<"manage" | "chat">("manage");
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedIntegration = useMemo(
     () => integrations.find((integration) => integration.id === draft.providerIntegrationId) ?? null,
@@ -276,8 +288,52 @@ export function AgentsPageClient() {
     if (!response.ok || !body.ok || !body.data?.dialog?.id) {
       throw new Error(body.error?.message ?? "Не удалось создать чат-сессию");
     }
-    setDialogId(body.data.dialog.id);
-    return body.data.dialog.id;
+    const newDialogId = body.data.dialog.id;
+    const now = new Date().toISOString();
+    setChatSessions((prev) => [{ id: newDialogId, status: "OPEN", createdAt: now, updatedAt: now }, ...prev]);
+    setDialogId(newDialogId);
+    return newDialogId;
+  }
+
+  async function loadSessions(agentId: string, preferredDialogId?: string) {
+    setSessionsLoading(true);
+    const response = await fetch(`/api/agents/${agentId}/chat/sessions`);
+    const body = (await response.json()) as {
+      ok: boolean;
+      data?: { sessions?: ChatSession[] };
+      error?: { message?: string };
+    };
+    if (!response.ok || !body.ok) {
+      setSessionsLoading(false);
+      setChatError(body.error?.message ?? "Не удалось загрузить сессии чата");
+      return;
+    }
+    const sessions = body.data?.sessions ?? [];
+    setChatSessions(sessions);
+
+    const targetDialogId = preferredDialogId ?? sessions[0]?.id ?? null;
+    setDialogId(targetDialogId);
+    if (targetDialogId) {
+      await loadMessages(agentId, targetDialogId);
+    } else {
+      setChatMessages([]);
+    }
+    setSessionsLoading(false);
+  }
+
+  async function createSession(agentId: string) {
+    setChatError(null);
+    const response = await fetch(`/api/agents/${agentId}/chat/sessions`, { method: "POST" });
+    const body = (await response.json()) as {
+      ok: boolean;
+      data?: { dialog?: { id: string } };
+      error?: { message?: string };
+    };
+    if (!response.ok || !body.ok || !body.data?.dialog?.id) {
+      setChatError(body.error?.message ?? "Не удалось создать чат-сессию");
+      return;
+    }
+    await loadSessions(agentId, body.data.dialog.id);
   }
 
   async function loadMessages(agentId: string, forcedDialogId?: string) {
@@ -299,6 +355,8 @@ export function AgentsPageClient() {
     if (!list || list.length === 0) {
       return;
     }
+    setUploadingFiles(true);
+    setChatError(null);
     const form = new FormData();
     for (const file of Array.from(list).slice(0, 10)) {
       form.append("files", file);
@@ -310,9 +368,11 @@ export function AgentsPageClient() {
     const body = (await response.json()) as UploadResponse;
     if (!response.ok || !body.ok || !body.data?.files) {
       setChatError(body.error?.message ?? "Не удалось загрузить файлы");
+      setUploadingFiles(false);
       return;
     }
     setChatFiles((prev) => [...prev, ...body.data!.files!].slice(0, 10));
+    setUploadingFiles(false);
   }
 
   function speakText(text: string) {
@@ -492,25 +552,67 @@ export function AgentsPageClient() {
       return;
     }
     setDialogId(null);
+    setChatSessions([]);
     setChatMessages([]);
     setChatFiles([]);
     setChatInput("");
     setChatError(null);
+    void loadSessions(activeAgentId);
   }, [activeAgentId]);
 
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setDragActive(false);
+    void uploadSelectedFiles(event.dataTransfer.files);
+  }
+
+  function handleDrag(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.type === "dragenter" || event.type === "dragover") {
+      setDragActive(true);
+    } else if (event.type === "dragleave") {
+      setDragActive(false);
+    }
+  }
+
   return (
-    <section className="card">
-      <h1 style={{ marginBottom: 6 }}>Агенты</h1>
-      <p style={{ marginTop: 0, color: "#6b7280" }}>
-        Полноценный CRUD для агентов, конфиг модели и изоляция данных только в рамках вашего аккаунта.
-      </p>
+    <section className="card agents-crm">
+      <div className="agents-crm-top">
+        <div>
+          <h1 style={{ marginBottom: 6 }}>Агенты</h1>
+          <p style={{ marginTop: 0, color: "#6b7280" }}>
+            Удобное создание, управление и тестирование агентов внутри вашего аккаунта.
+          </p>
+        </div>
+        <div className="crm-tabs">
+          <button
+            type="button"
+            className={viewTab === "manage" ? "crm-tab-active" : "button-ghost"}
+            onClick={() => setViewTab("manage")}
+          >
+            Управление агентами
+          </button>
+          <button
+            type="button"
+            className={viewTab === "chat" ? "crm-tab-active" : "button-ghost"}
+            onClick={() => setViewTab("chat")}
+          >
+            Тестовые чаты
+          </button>
+        </div>
+      </div>
+
       {error ? <p style={{ color: "crimson" }}>{error}</p> : null}
 
       {integrations.length === 0 ? (
         <div className="agents-empty">
           <p>Нет доступных AI интеграций. Сначала настройте провайдера на странице Интеграции AI.</p>
         </div>
-      ) : (
+      ) : null}
+
+      {integrations.length > 0 && viewTab === "manage" ? (
         <div className="agents-layout">
           <div className="agent-form">
             <h3>{editingId ? "Редактирование агента" : "Создание агента"}</h3>
@@ -628,7 +730,7 @@ export function AgentsPageClient() {
 
           <div className="agents-list">
             <div className="agents-list-header">
-              <strong>Список агентов</strong>
+              <strong>Реестр агентов</strong>
               <span>{items.length} шт.</span>
             </div>
             {loading ? (
@@ -662,9 +764,12 @@ export function AgentsPageClient() {
                     <button
                       type="button"
                       className="button-ghost"
-                      onClick={() => setActiveAgentId(item.id)}
+                      onClick={() => {
+                        setActiveAgentId(item.id);
+                        setViewTab("chat");
+                      }}
                     >
-                      Тест чат
+                      Открыть чат
                     </button>
                     <button type="button" className="button-ghost" onClick={() => onEdit(item)}>
                       Редактировать
@@ -685,146 +790,200 @@ export function AgentsPageClient() {
             )}
           </div>
         </div>
-      )}
+      ) : null}
 
-      <div className="agent-chat card" style={{ marginTop: 16 }}>
-        <div className="agent-chat-tabs">
-          <button
-            type="button"
-            className={`button-ghost ${chatTab === "agents" ? "tab-active" : ""}`}
-            onClick={() => setChatTab("agents")}
-          >
-            Агенты
-          </button>
-          <button
-            type="button"
-            className={`button-ghost ${chatTab === "chat" ? "tab-active" : ""}`}
-            onClick={() => setChatTab("chat")}
-          >
-            Чаты
-          </button>
-        </div>
-        {chatTab === "agents" ? (
-          <p style={{ margin: "8px 0 0", color: "#6b7280" }}>
-            Переключайтесь между агентами в списке сверху и нажимайте «Тест чат» для быстрого запуска.
-          </p>
-        ) : null}
-        <div className="agent-chat-header">
-          <h3 style={{ margin: 0 }}>Тест чат агента</h3>
-          <select
-            value={activeAgentId ?? ""}
-            onChange={(event) => setActiveAgentId(event.target.value || null)}
-            style={{ maxWidth: 360 }}
-          >
-            <option value="">Выберите агента</option>
-            {items.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.name} ({agent.model})
-              </option>
-            ))}
-          </select>
-        </div>
-        {activeAgent && chatTab === "chat" ? (
-          <>
-            <p style={{ marginTop: 8, color: "#6b7280" }}>
-              Интеграция: {activeAgent.providerIntegration.displayName} | Модель: {activeAgent.model}
-            </p>
-            <div className="agent-voice-controls">
-              <label className="integration-toggle">
-                <input
-                  type="checkbox"
-                  checked={voiceEnabled}
-                  onChange={(event) => setVoiceEnabled(event.target.checked)}
-                />
-                Голосовой ответ
-              </label>
-              <select value={voiceBackend} onChange={(event) => setVoiceBackend(event.target.value as "browser" | "provider")}>
-                <option value="browser">Voice backend: browser (по умолчанию)</option>
-                <option value="provider">Voice backend: provider</option>
-              </select>
-              <select value={voiceGender} onChange={(event) => setVoiceGender(event.target.value as "female" | "male")}>
-                <option value="female">Голос: женский</option>
-                <option value="male">Голос: мужской</option>
-              </select>
-              <select
-                value={voiceStyle}
-                onChange={(event) => setVoiceStyle(event.target.value as "neutral" | "calm" | "energetic")}
-              >
-                <option value="neutral">Стиль: нейтральный</option>
-                <option value="calm">Стиль: спокойный</option>
-                <option value="energetic">Стиль: энергичный</option>
-              </select>
-              <button type="button" className="button-ghost" onClick={startVoiceInput}>
-                {listening ? "Слушаю..." : "Голосовой ввод"}
-              </button>
+      {integrations.length > 0 && viewTab === "chat" ? (
+        <div className="crm-chat-layout">
+          <aside className="crm-chat-sidebar">
+            <div className="crm-chat-panel">
+              <div className="crm-panel-head">
+                <strong>Агенты</strong>
+              </div>
+              <div className="crm-panel-list">
+                {items.map((item) => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    className={`crm-agent-pick ${activeAgentId === item.id ? "crm-agent-pick-active" : ""}`}
+                    onClick={() => setActiveAgentId(item.id)}
+                  >
+                    <span>{item.name}</span>
+                    <small>{item.model}</small>
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div className="agent-chat-body">
-              {chatMessages.length === 0 ? (
-                <p style={{ color: "#6b7280" }}>Сообщений пока нет. Отправьте запрос для теста агента.</p>
-              ) : (
-                chatMessages.map((message) => (
-                  <div key={message.id} className={`chat-bubble ${message.role === "USER" ? "chat-user" : "chat-assistant"}`}>
-                    <strong>{message.role === "USER" ? "Вы" : "Агент"}</strong>
-                    <p>{message.text}</p>
-                    {message.attachments.length > 0 ? (
-                      <div className="chat-attachments">
-                        {message.attachments.map((file) => (
-                          <a key={`${message.id}-${file.url}`} href={file.url} target="_blank" rel="noreferrer">
-                            {file.name}
-                          </a>
-                        ))}
-                      </div>
-                    ) : null}
-                    <small>{asLocalDate(message.createdAt)}</small>
-                  </div>
-                ))
-              )}
-              {chatLoading ? <p style={{ color: "#6b7280" }}>Агент печатает ответ...</p> : null}
-            </div>
-            <div className="agent-chat-input">
-              <textarea
-                rows={3}
-                value={chatInput}
-                onChange={(event) => setChatInput(event.target.value)}
-                placeholder="Введите сообщение для проверки агента..."
-              />
-              <div className="agent-chat-input-actions">
-                <input
-                  type="file"
-                  multiple
-                  onChange={(event) => {
-                    void uploadSelectedFiles(event.target.files);
-                    event.currentTarget.value = "";
+            <div className="crm-chat-panel">
+              <div className="crm-panel-head">
+                <strong>Сессии чатов</strong>
+                <button
+                  type="button"
+                  className="button-ghost"
+                  disabled={!activeAgentId}
+                  onClick={() => {
+                    if (activeAgentId) {
+                      void createSession(activeAgentId);
+                    }
                   }}
-                />
-                <button type="button" disabled={chatLoading || !chatInput.trim()} onClick={() => void sendMessage()}>
-                  {chatLoading ? "Отправка..." : "Отправить"}
+                >
+                  Новый чат
                 </button>
               </div>
-              {chatFiles.length > 0 ? (
-                <div className="chat-pending-files">
-                  {chatFiles.map((file) => (
-                    <span key={file.url}>
-                      {file.name}
-                      <button
-                        type="button"
-                        className="button-ghost"
-                        onClick={() => setChatFiles((prev) => prev.filter((item) => item.url !== file.url))}
-                      >
-                        x
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              {chatError ? <p style={{ color: "crimson" }}>{chatError}</p> : null}
+              <div className="crm-panel-list">
+                {sessionsLoading ? <small>Загрузка сессий...</small> : null}
+                {!sessionsLoading && chatSessions.length === 0 ? <small>Сессий пока нет</small> : null}
+                {chatSessions.map((session) => (
+                  <button
+                    type="button"
+                    key={session.id}
+                    className={`crm-session-pick ${dialogId === session.id ? "crm-session-pick-active" : ""}`}
+                    onClick={() => {
+                      if (activeAgentId) {
+                        setDialogId(session.id);
+                        void loadMessages(activeAgentId, session.id);
+                      }
+                    }}
+                  >
+                    <span>Чат {session.id.slice(-6)}</span>
+                    <small>{asLocalDate(session.updatedAt)}</small>
+                  </button>
+                ))}
+              </div>
             </div>
-          </>
-        ) : chatTab === "chat" ? (
-          <p style={{ color: "#6b7280" }}>Выберите агента для тестового чата.</p>
-        ) : null}
-      </div>
+          </aside>
+
+          <div className="crm-chat-main">
+            {activeAgent ? (
+              <>
+                <div className="agent-chat-header">
+                  <h3 style={{ margin: 0 }}>Тест чат агента</h3>
+                  <div className="crm-agent-badge">
+                    {activeAgent.name} · {activeAgent.providerIntegration.displayName}
+                  </div>
+                </div>
+                <p style={{ marginTop: 8, color: "#6b7280" }}>Модель: {activeAgent.model}</p>
+
+                <div className="agent-voice-controls">
+                  <label className="integration-toggle">
+                    <input
+                      type="checkbox"
+                      checked={voiceEnabled}
+                      onChange={(event) => setVoiceEnabled(event.target.checked)}
+                    />
+                    Голосовой ответ
+                  </label>
+                  <select value={voiceBackend} onChange={(event) => setVoiceBackend(event.target.value as "browser" | "provider")}>
+                    <option value="browser">Voice backend: browser (по умолчанию)</option>
+                    <option value="provider">Voice backend: provider</option>
+                  </select>
+                  <select value={voiceGender} onChange={(event) => setVoiceGender(event.target.value as "female" | "male")}>
+                    <option value="female">Голос: женский</option>
+                    <option value="male">Голос: мужской</option>
+                  </select>
+                  <select
+                    value={voiceStyle}
+                    onChange={(event) => setVoiceStyle(event.target.value as "neutral" | "calm" | "energetic")}
+                  >
+                    <option value="neutral">Стиль: нейтральный</option>
+                    <option value="calm">Стиль: спокойный</option>
+                    <option value="energetic">Стиль: энергичный</option>
+                  </select>
+                  <button type="button" className="button-ghost" onClick={startVoiceInput}>
+                    {listening ? "Слушаю..." : "Голосовой ввод"}
+                  </button>
+                </div>
+
+                <div className="agent-chat-body">
+                  {chatMessages.length === 0 ? (
+                    <p style={{ color: "#6b7280" }}>Сообщений пока нет. Начните новый тестовый диалог.</p>
+                  ) : (
+                    chatMessages.map((message) => (
+                      <div key={message.id} className={`chat-bubble ${message.role === "USER" ? "chat-user" : "chat-assistant"}`}>
+                        <strong>{message.role === "USER" ? "Вы" : "Агент"}</strong>
+                        <p>{message.text}</p>
+                        {message.attachments.length > 0 ? (
+                          <div className="chat-attachments">
+                            {message.attachments.map((file) => (
+                              <a key={`${message.id}-${file.url}`} href={file.url} target="_blank" rel="noreferrer">
+                                {file.name}
+                              </a>
+                            ))}
+                          </div>
+                        ) : null}
+                        <small>{asLocalDate(message.createdAt)}</small>
+                      </div>
+                    ))
+                  )}
+                  {chatLoading ? <p style={{ color: "#6b7280" }}>Агент печатает ответ...</p> : null}
+                </div>
+
+                <div className="agent-chat-input">
+                  <div
+                    className={`chat-dropzone ${dragActive ? "chat-dropzone-active" : ""}`}
+                    onDrop={handleDrop}
+                    onDragEnter={handleDrag}
+                    onDragOver={handleDrag}
+                    onDragLeave={handleDrag}
+                  >
+                    <p>Перетащите файлы сюда или загрузите вручную</p>
+                    <button
+                      type="button"
+                      className="chat-upload-btn"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingFiles}
+                    >
+                      {uploadingFiles ? "Загрузка..." : "Выбрать файлы"}
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      hidden
+                      onChange={(event) => {
+                        void uploadSelectedFiles(event.target.files);
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </div>
+
+                  {chatFiles.length > 0 ? (
+                    <div className="chat-pending-files">
+                      {chatFiles.map((file) => (
+                        <span key={file.url}>
+                          {file.name}
+                          <button
+                            type="button"
+                            className="button-ghost"
+                            onClick={() => setChatFiles((prev) => prev.filter((item) => item.url !== file.url))}
+                          >
+                            x
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <textarea
+                    rows={3}
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                    placeholder="Введите сообщение для проверки агента..."
+                  />
+                  <div className="agent-chat-input-actions">
+                    <button type="button" disabled={chatLoading || !chatInput.trim()} onClick={() => void sendMessage()}>
+                      {chatLoading ? "Отправка..." : "Отправить"}
+                    </button>
+                  </div>
+                  {chatError ? <p style={{ color: "crimson" }}>{chatError}</p> : null}
+                </div>
+              </>
+            ) : (
+              <p style={{ color: "#6b7280" }}>Выберите агента слева, чтобы открыть тестовый чат.</p>
+            )}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
