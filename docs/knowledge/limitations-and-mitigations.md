@@ -40,7 +40,7 @@ sudo -u postgres psql -d ИМЯ_БД -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 
 ## 4. Cron воркера эмбеддингов
 
-Скрипт: `infra/scripts/embedding-worker-cron.sh` (переменные `AI_SITE_AL_ROOT`, `AI_SITE_AL_PORT` при необходимости).
+Скрипт: `infra/scripts/embedding-worker-cron.sh` (переменные `AI_SITE_AL_ROOT`, `AI_SITE_AL_PORT` при необходимости). Файл должен быть с **LF**-окончаниями строк (в репозитории задано в `.gitattributes` для `*.sh`).
 
 Пример crontab (раз в 2 минуты):
 
@@ -51,3 +51,20 @@ sudo -u postgres psql -d ИМЯ_БД -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 Лог по умолчанию: `/var/log/ai-site-al-embedding-worker.log`.
 
 После изменения `.env` перезапустите процесс Next.js (`next start`), чтобы подтянулись новые переменные (если не используете внешнюю подстановку env в systemd/pm2).
+
+### Next.js в монорепо (`npm run start -w apps/web`)
+
+Next подхватывает `.env*` из каталога **`apps/web`**, а не только из корня репозитория. Если `EMBEDDING_WORKER_SECRET` задан только в корневом `.env`, воркер вернёт `503 NOT_CONFIGURED`.
+
+**Решение:** продублировать нужные ключи в `apps/web/.env.production.local` (или `apps/web/.env.local`), например:
+
+```bash
+grep '^EMBEDDING_WORKER_SECRET=' /var/www/ai.site-al.ru/.env >> /var/www/ai.site-al.ru/apps/web/.env.production.local
+grep '^EMBEDDING_MODEL=' /var/www/ai.site-al.ru/.env >> /var/www/ai.site-al.ru/apps/web/.env.production.local
+grep '^OPENROUTER_EMBEDDING_MODEL=' /var/www/ai.site-al.ru/.env >> /var/www/ai.site-al.ru/apps/web/.env.production.local
+grep '^DATABASE_URL=' /var/www/ai.site-al.ru/.env >> /var/www/ai.site-al.ru/apps/web/.env.production.local
+# при необходимости:
+# echo 'NODE_ENV=production' >> .../apps/web/.env.production.local
+```
+
+Затем перезапуск `next` на порту приложения.
