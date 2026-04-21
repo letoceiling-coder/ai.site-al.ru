@@ -38,6 +38,31 @@ type AgentsResponse = {
   error?: { message?: string };
 };
 
+type ChatMessage = {
+  id: string;
+  role: string;
+  text: string;
+  attachments: Array<{ name: string; url: string; mimeType: string; size: number }>;
+  createdAt: string;
+};
+
+type ChatGetResponse = {
+  ok: boolean;
+  data?: {
+    dialog?: { id: string };
+    messages?: ChatMessage[];
+  };
+  error?: { message?: string };
+};
+
+type UploadResponse = {
+  ok: boolean;
+  data?: {
+    files?: Array<{ name: string; url: string; mimeType: string; size: number }>;
+  };
+  error?: { message?: string };
+};
+
 type AgentDraft = {
   name: string;
   description: string;
@@ -76,6 +101,18 @@ export function AgentsPageClient() {
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+  const [dialogId, setDialogId] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [chatFiles, setChatFiles] = useState<Array<{ name: string; url: string; mimeType: string; size: number }>>([]);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [voiceBackend, setVoiceBackend] = useState<"browser" | "provider">("browser");
+  const [voiceGender, setVoiceGender] = useState<"female" | "male">("female");
+  const [voiceStyle, setVoiceStyle] = useState<"neutral" | "calm" | "energetic">("neutral");
+  const [listening, setListening] = useState(false);
 
   const allModels = useMemo(() => {
     const merged = new Set<string>();
@@ -152,6 +189,15 @@ export function AgentsPageClient() {
         })(),
       });
     }
+    const agents = body.data.agents ?? [];
+    if (agents.length > 0 && !activeAgentId) {
+      setActiveAgentId(agents[0].id);
+    }
+    if (agents.length === 0) {
+      setActiveAgentId(null);
+      setDialogId(null);
+      setChatMessages([]);
+    }
     setError(null);
     setLoading(false);
   }
@@ -218,8 +264,191 @@ export function AgentsPageClient() {
     if (editingId === item.id) {
       resetDraft();
     }
+    if (activeAgentId === item.id) {
+      setActiveAgentId(null);
+      setDialogId(null);
+      setChatMessages([]);
+    }
     setRemovingId(null);
   }
+
+  async function ensureSession(agentId: string) {
+    if (dialogId) {
+      return dialogId;
+    }
+    const response = await fetch(`/api/agents/${agentId}/chat/sessions`, { method: "POST" });
+    const body = (await response.json()) as {
+      ok: boolean;
+      data?: { dialog?: { id: string } };
+      error?: { message?: string };
+    };
+    if (!response.ok || !body.ok || !body.data?.dialog?.id) {
+      throw new Error(body.error?.message ?? "Не удалось создать чат-сессию");
+    }
+    setDialogId(body.data.dialog.id);
+    return body.data.dialog.id;
+  }
+
+  async function loadMessages(agentId: string, forcedDialogId?: string) {
+    const id = forcedDialogId ?? dialogId;
+    if (!id) {
+      setChatMessages([]);
+      return;
+    }
+    const response = await fetch(`/api/agents/${agentId}/chat/messages?dialogId=${encodeURIComponent(id)}`);
+    const body = (await response.json()) as ChatGetResponse;
+    if (!response.ok || !body.ok || !body.data?.messages) {
+      setChatError(body.error?.message ?? "Не удалось загрузить сообщения");
+      return;
+    }
+    setChatMessages(body.data.messages);
+  }
+
+  async function uploadSelectedFiles(list: FileList | null) {
+    if (!list || list.length === 0) {
+      return;
+    }
+    const form = new FormData();
+    for (const file of Array.from(list).slice(0, 10)) {
+      form.append("files", file);
+    }
+    const response = await fetch("/api/uploads", {
+      method: "POST",
+      body: form,
+    });
+    const body = (await response.json()) as UploadResponse;
+    if (!response.ok || !body.ok || !body.data?.files) {
+      setChatError(body.error?.message ?? "Не удалось загрузить файлы");
+      return;
+    }
+    setChatFiles((prev) => [...prev, ...body.data!.files!].slice(0, 10));
+  }
+
+  function speakText(text: string) {
+    if (!voiceEnabled || voiceBackend !== "browser") {
+      return;
+    }
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      return;
+    }
+    const synth = window.speechSynthesis;
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voices = synth.getVoices();
+    const femaleTokens = ["female", "woman", "zira", "anna", "maria"];
+    const maleTokens = ["male", "man", "david", "alex", "pavel"];
+    const selectedTokens = voiceGender === "female" ? femaleTokens : maleTokens;
+    const selectedVoice = voices.find((voice) =>
+      selectedTokens.some((token) => voice.name.toLowerCase().includes(token) || voice.voiceURI.toLowerCase().includes(token)),
+    );
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+    if (voiceStyle === "calm") {
+      utterance.rate = 0.9;
+      utterance.pitch = 0.95;
+    } else if (voiceStyle === "energetic") {
+      utterance.rate = 1.08;
+      utterance.pitch = 1.1;
+    } else {
+      utterance.rate = 1;
+      utterance.pitch = 1;
+    }
+    synth.cancel();
+    synth.speak(utterance);
+  }
+
+  function startVoiceInput() {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const AnyWindow = window as typeof window & {
+      webkitSpeechRecognition?: new () => any;
+      SpeechRecognition?: new () => any;
+    };
+    const Recognition = AnyWindow.SpeechRecognition ?? AnyWindow.webkitSpeechRecognition;
+    if (!Recognition) {
+      setChatError("Голосовой ввод недоступен в этом браузере");
+      return;
+    }
+    const recognition = new Recognition();
+    recognition.lang = "ru-RU";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.onstart = () => setListening(true);
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
+    recognition.onresult = (event: any) => {
+      const text = Array.from(event.results)
+        .map((result: any) => String(result[0]?.transcript ?? ""))
+        .join(" ");
+      setChatInput((prev) => `${prev} ${text}`.trim());
+    };
+    recognition.start();
+  }
+
+  async function sendMessage() {
+    if (!activeAgentId || !chatInput.trim()) {
+      return;
+    }
+    setChatLoading(true);
+    setChatError(null);
+    try {
+      const currentDialogId = await ensureSession(activeAgentId);
+      const response = await fetch(`/api/agents/${activeAgentId}/chat/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dialogId: currentDialogId,
+          text: chatInput.trim(),
+          attachments: chatFiles,
+        }),
+      });
+      const body = (await response.json()) as {
+        ok: boolean;
+        data?: { dialogId?: string; messages?: ChatMessage[] };
+        error?: { message?: string };
+      };
+      if (!response.ok || !body.ok || !body.data?.messages) {
+        throw new Error(body.error?.message ?? "Не удалось отправить сообщение");
+      }
+      setDialogId(body.data.dialogId ?? currentDialogId);
+      setChatInput("");
+      setChatFiles([]);
+      await loadMessages(activeAgentId, body.data.dialogId ?? currentDialogId);
+      const lastAssistant = [...body.data.messages].reverse().find((item) => item.role === "ASSISTANT");
+      if (lastAssistant?.text) {
+        speakText(lastAssistant.text);
+      }
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : "Ошибка отправки сообщения");
+    } finally {
+      setChatLoading(false);
+    }
+  }
+
+  const activeAgent = useMemo(() => items.find((item) => item.id === activeAgentId) ?? null, [items, activeAgentId]);
+
+  useEffect(() => {
+    if (!activeAgentId) {
+      return;
+    }
+    setDialogId(null);
+    setChatMessages([]);
+    setChatFiles([]);
+    setChatInput("");
+    setChatError(null);
+  }, [activeAgentId]);
+
+  useEffect(() => {
+    if (!activeAgentId || !dialogId) {
+      return;
+    }
+    const timer = setInterval(() => {
+      void loadMessages(activeAgentId);
+    }, 1500);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAgentId, dialogId]);
 
   return (
     <section className="card">
@@ -370,6 +599,13 @@ export function AgentsPageClient() {
                     <span>Обновлен: {asLocalDate(item.updatedAt)}</span>
                   </div>
                   <div className="agent-item-actions">
+                    <button
+                      type="button"
+                      className="button-ghost"
+                      onClick={() => setActiveAgentId(item.id)}
+                    >
+                      Тест чат
+                    </button>
                     <button type="button" className="button-ghost" onClick={() => onEdit(item)}>
                       Редактировать
                     </button>
@@ -390,6 +626,124 @@ export function AgentsPageClient() {
           </div>
         </div>
       )}
+
+      <div className="agent-chat card" style={{ marginTop: 16 }}>
+        <div className="agent-chat-header">
+          <h3 style={{ margin: 0 }}>Тест чат агента</h3>
+          <select
+            value={activeAgentId ?? ""}
+            onChange={(event) => setActiveAgentId(event.target.value || null)}
+            style={{ maxWidth: 360 }}
+          >
+            <option value="">Выберите агента</option>
+            {items.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.name} ({agent.model})
+              </option>
+            ))}
+          </select>
+        </div>
+        {activeAgent ? (
+          <>
+            <p style={{ marginTop: 8, color: "#6b7280" }}>
+              Интеграция: {activeAgent.providerIntegration.displayName} | Модель: {activeAgent.model}
+            </p>
+            <div className="agent-voice-controls">
+              <label className="integration-toggle">
+                <input
+                  type="checkbox"
+                  checked={voiceEnabled}
+                  onChange={(event) => setVoiceEnabled(event.target.checked)}
+                />
+                Голосовой ответ
+              </label>
+              <select value={voiceBackend} onChange={(event) => setVoiceBackend(event.target.value as "browser" | "provider")}>
+                <option value="browser">Voice backend: browser (по умолчанию)</option>
+                <option value="provider">Voice backend: provider</option>
+              </select>
+              <select value={voiceGender} onChange={(event) => setVoiceGender(event.target.value as "female" | "male")}>
+                <option value="female">Голос: женский</option>
+                <option value="male">Голос: мужской</option>
+              </select>
+              <select
+                value={voiceStyle}
+                onChange={(event) => setVoiceStyle(event.target.value as "neutral" | "calm" | "energetic")}
+              >
+                <option value="neutral">Стиль: нейтральный</option>
+                <option value="calm">Стиль: спокойный</option>
+                <option value="energetic">Стиль: энергичный</option>
+              </select>
+              <button type="button" className="button-ghost" onClick={startVoiceInput}>
+                {listening ? "Слушаю..." : "Голосовой ввод"}
+              </button>
+            </div>
+
+            <div className="agent-chat-body">
+              {chatMessages.length === 0 ? (
+                <p style={{ color: "#6b7280" }}>Сообщений пока нет. Отправьте запрос для теста агента.</p>
+              ) : (
+                chatMessages.map((message) => (
+                  <div key={message.id} className={`chat-bubble ${message.role === "USER" ? "chat-user" : "chat-assistant"}`}>
+                    <strong>{message.role === "USER" ? "Вы" : "Агент"}</strong>
+                    <p>{message.text}</p>
+                    {message.attachments.length > 0 ? (
+                      <div className="chat-attachments">
+                        {message.attachments.map((file) => (
+                          <a key={`${message.id}-${file.url}`} href={file.url} target="_blank" rel="noreferrer">
+                            {file.name}
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
+                    <small>{asLocalDate(message.createdAt)}</small>
+                  </div>
+                ))
+              )}
+              {chatLoading ? <p style={{ color: "#6b7280" }}>Агент печатает ответ...</p> : null}
+            </div>
+            <div className="agent-chat-input">
+              <textarea
+                rows={3}
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                placeholder="Введите сообщение для проверки агента..."
+              />
+              <div className="agent-chat-input-actions">
+                <input
+                  type="file"
+                  multiple
+                  onChange={(event) => {
+                    void uploadSelectedFiles(event.target.files);
+                    event.currentTarget.value = "";
+                  }}
+                />
+                <button type="button" disabled={chatLoading || !chatInput.trim()} onClick={() => void sendMessage()}>
+                  {chatLoading ? "Отправка..." : "Отправить"}
+                </button>
+              </div>
+              {chatFiles.length > 0 ? (
+                <div className="chat-pending-files">
+                  {chatFiles.map((file) => (
+                    <span key={file.url}>
+                      {file.name}
+                      <button
+                        type="button"
+                        className="button-ghost"
+                        onClick={() => setChatFiles((prev) => prev.filter((item) => item.url !== file.url))}
+                      >
+                        x
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {chatError ? <p style={{ color: "crimson" }}>{chatError}</p> : null}
+            </div>
+          </>
+        ) : (
+          <p style={{ color: "#6b7280" }}>Выберите агента для тестового чата.</p>
+        )}
+      </div>
     </section>
   );
 }

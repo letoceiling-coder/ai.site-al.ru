@@ -37,6 +37,12 @@ export const aiProviders = [
     title: "ElevenLabs",
     docsUrl: "https://elevenlabs.io/docs/api-reference",
   },
+  {
+    id: "openrouter",
+    enumValue: null,
+    title: "OpenRouter",
+    docsUrl: "https://openrouter.ai/docs/quickstart",
+  },
 ] as const;
 
 export type AiProviderId = (typeof aiProviders)[number]["id"];
@@ -75,6 +81,9 @@ export function decodeSecret(secret: string | null | undefined) {
 }
 
 export async function getIntegrationRow(tenantId: string, providerEnum: ProviderEnum) {
+  if (!providerEnum) {
+    return null;
+  }
   return prisma.providerIntegration.findFirst({
     where: {
       tenantId,
@@ -207,6 +216,18 @@ async function testElevenLabs(apiKey: string): Promise<TestResult> {
   return toResult("ElevenLabs", response);
 }
 
+async function testOpenRouter(apiKey: string): Promise<TestResult> {
+  const response = await fetch("https://openrouter.ai/api/v1/models", {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: "application/json",
+      "HTTP-Referer": "https://ai.site-al.ru",
+      "X-Title": "ai.site-al.ru",
+    },
+  });
+  return toResult("OpenRouter", response);
+}
+
 export async function testProviderConnection(providerId: AiProviderId, apiKey: string): Promise<TestResult> {
   const withTimeout = async (fn: () => Promise<TestResult>) => {
     const timeout = new Promise<TestResult>((resolve) => {
@@ -232,6 +253,8 @@ export async function testProviderConnection(providerId: AiProviderId, apiKey: s
       return withTimeout(() => testReplicate(apiKey));
     case "elevenlabs":
       return withTimeout(() => testElevenLabs(apiKey));
+    case "openrouter":
+      return withTimeout(() => testOpenRouter(apiKey));
     default:
       return { ok: false, message: "Unknown provider" };
   }

@@ -24,6 +24,7 @@ const adapters = new Map<ProviderName, AiProviderAdapter>([
   ["xai", new PlaceholderAdapter("xai")],
   ["replicate", new PlaceholderAdapter("replicate")],
   ["elevenlabs", new PlaceholderAdapter("elevenlabs")],
+  ["openrouter", new PlaceholderAdapter("openrouter")],
   ["telegram", new PlaceholderAdapter("telegram")],
   ["avito", new PlaceholderAdapter("avito")],
 ]);

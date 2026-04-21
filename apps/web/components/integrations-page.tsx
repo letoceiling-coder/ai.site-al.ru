@@ -12,6 +12,10 @@ type ProviderRow = {
   lastTestAt: string | null;
   lastTestOk: boolean | null;
   lastTestMessage: string | null;
+  config?: {
+    model?: string;
+    autoRouting?: boolean;
+  } | null;
 };
 
 type ResponseShape = {
@@ -31,7 +35,9 @@ export function IntegrationsPageClient() {
   const [saving, setSaving] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, { enabled: boolean; apiKey: string }>>({});
+  const [drafts, setDrafts] = useState<
+    Record<string, { enabled: boolean; apiKey: string; model: string; autoRouting: boolean }>
+  >({});
 
   async function load() {
     const response = await fetch("/api/integrations");
@@ -41,11 +47,13 @@ export function IntegrationsPageClient() {
       return;
     }
     setItems(body.data.integrations);
-    const nextDrafts: Record<string, { enabled: boolean; apiKey: string }> = {};
+    const nextDrafts: Record<string, { enabled: boolean; apiKey: string; model: string; autoRouting: boolean }> = {};
     for (const item of body.data.integrations) {
       nextDrafts[item.provider] = {
         enabled: item.enabled,
         apiKey: "",
+        model: item.config?.model ?? "openai/gpt-4.1-mini",
+        autoRouting: item.config?.autoRouting !== false,
       };
     }
     setDrafts(nextDrafts);
@@ -56,12 +64,17 @@ export function IntegrationsPageClient() {
     void load();
   }, []);
 
-  function setDraft(provider: string, patch: Partial<{ enabled: boolean; apiKey: string }>) {
+  function setDraft(
+    provider: string,
+    patch: Partial<{ enabled: boolean; apiKey: string; model: string; autoRouting: boolean }>,
+  ) {
     setDrafts((prev) => ({
       ...prev,
       [provider]: {
         enabled: prev[provider]?.enabled ?? false,
         apiKey: prev[provider]?.apiKey ?? "",
+        model: prev[provider]?.model ?? "openai/gpt-4.1-mini",
+        autoRouting: prev[provider]?.autoRouting ?? true,
         ...patch,
       },
     }));
@@ -70,13 +83,15 @@ export function IntegrationsPageClient() {
   async function save(provider: string) {
     setSaving(provider);
     setError(null);
-    const draft = drafts[provider] ?? { enabled: false, apiKey: "" };
+    const draft = drafts[provider] ?? { enabled: false, apiKey: "", model: "openai/gpt-4.1-mini", autoRouting: true };
     const response = await fetch(`/api/integrations/${provider}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         enabled: draft.enabled,
         apiKey: draft.apiKey.trim() || undefined,
+        model: draft.model.trim() || undefined,
+        autoRouting: draft.autoRouting,
       }),
     });
     const body = (await response.json()) as ResponseShape;
@@ -114,7 +129,12 @@ export function IntegrationsPageClient() {
 
       <div className="integrations-grid">
         {items.map((item) => {
-          const draft = drafts[item.provider] ?? { enabled: item.enabled, apiKey: "" };
+          const draft = drafts[item.provider] ?? {
+            enabled: item.enabled,
+            apiKey: "",
+            model: item.config?.model ?? "openai/gpt-4.1-mini",
+            autoRouting: item.config?.autoRouting !== false,
+          };
           const isBusy = saving === item.provider || testing === item.provider;
           return (
             <article key={item.provider} className="integration-card">
@@ -138,6 +158,24 @@ export function IntegrationsPageClient() {
                 value={draft.apiKey}
                 onChange={(event) => setDraft(item.provider, { apiKey: event.target.value })}
               />
+              {item.provider === "openrouter" ? (
+                <>
+                  <input
+                    type="text"
+                    placeholder="Модель OpenRouter (например openai/gpt-4.1-mini)"
+                    value={draft.model}
+                    onChange={(event) => setDraft(item.provider, { model: event.target.value })}
+                  />
+                  <label className="integration-toggle">
+                    <input
+                      type="checkbox"
+                      checked={draft.autoRouting}
+                      onChange={(event) => setDraft(item.provider, { autoRouting: event.target.checked })}
+                    />
+                    Автоматический роутинг через OpenRouter
+                  </label>
+                </>
+              ) : null}
               <div className="integration-status">
                 <span>
                   {item.lastTestOk === true

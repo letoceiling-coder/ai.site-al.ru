@@ -19,6 +19,8 @@ type UsageRow = {
   agentName: string | null;
   assistantId: string | null;
   assistantName: string | null;
+  dialogId: string | null;
+  routeMode: "openrouter" | "direct";
 };
 
 type UsageSummary = {
@@ -27,6 +29,8 @@ type UsageSummary = {
   tokensOutput: number;
   totalTokens: number;
   totalCostUsd: number;
+  openrouterEvents?: number;
+  directEvents?: number;
 };
 
 type UsageFilterOptions = {
@@ -35,6 +39,7 @@ type UsageFilterOptions = {
   integrations: Array<{ id: string; name: string }>;
   agents: Array<{ id: string; name: string }>;
   assistants: Array<{ id: string; name: string }>;
+  routeModes?: string[];
 };
 
 type AgentGroup = {
@@ -83,6 +88,7 @@ type FiltersState = {
   integrationId: string;
   agentId: string;
   assistantId: string;
+  routeMode: string;
   dateFrom: string;
   dateTo: string;
   sortField: "createdAt" | "tokensInput" | "tokensOutput" | "totalTokens" | "totalCostUsd";
@@ -97,6 +103,7 @@ const defaultFilters: FiltersState = {
   integrationId: "",
   agentId: "",
   assistantId: "",
+  routeMode: "",
   dateFrom: "",
   dateTo: "",
   sortField: "createdAt",
@@ -153,6 +160,7 @@ export function UsageAgentsPageClient() {
     if (filters.integrationId) query.set("integrationId", filters.integrationId);
     if (filters.agentId) query.set("agentId", filters.agentId);
     if (filters.assistantId) query.set("assistantId", filters.assistantId);
+    if (filters.routeMode) query.set("routeMode", filters.routeMode);
     if (filters.dateFrom) query.set("dateFrom", filters.dateFrom);
     if (filters.dateTo) query.set("dateTo", filters.dateTo);
     query.set("sortField", filters.sortField);
@@ -218,6 +226,12 @@ export function UsageAgentsPageClient() {
           <small>Стоимость, USD</small>
           <strong>{formatMoney(summary.totalCostUsd)}</strong>
         </div>
+        <div className="usage-summary-card">
+          <small>OpenRouter / Direct</small>
+          <strong>
+            {formatNum(summary.openrouterEvents ?? 0)} / {formatNum(summary.directEvents ?? 0)}
+          </strong>
+        </div>
       </div>
 
       <div className="usage-filters">
@@ -261,6 +275,11 @@ export function UsageAgentsPageClient() {
             </option>
           ))}
         </select>
+        <select value={filters.routeMode} onChange={(event) => applyPatch({ routeMode: event.target.value })}>
+          <option value="">Все маршруты</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="direct">Direct</option>
+        </select>
         <input type="date" value={filters.dateFrom} onChange={(event) => applyPatch({ dateFrom: event.target.value })} />
         <input type="date" value={filters.dateTo} onChange={(event) => applyPatch({ dateTo: event.target.value })} />
         <select
@@ -303,6 +322,8 @@ export function UsageAgentsPageClient() {
                 <th>Агент</th>
                 <th>Ассистент</th>
                 <th>Источник</th>
+                <th>Диалог</th>
+                <th>Маршрут</th>
                 <th>Input</th>
                 <th>Output</th>
                 <th>Total</th>
@@ -324,6 +345,8 @@ export function UsageAgentsPageClient() {
                     {row.sourceType}
                     {row.sourceId ? <small>{row.sourceId}</small> : null}
                   </td>
+                  <td>{row.dialogId ?? "—"}</td>
+                  <td>{row.routeMode}</td>
                   <td>{formatNum(row.tokensInput)}</td>
                   <td>{formatNum(row.tokensOutput)}</td>
                   <td>{formatNum(row.totalTokens)}</td>

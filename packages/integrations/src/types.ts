@@ -5,6 +5,7 @@ export type ProviderName =
   | "xai"
   | "replicate"
   | "elevenlabs"
+  | "openrouter"
   | "telegram"
   | "avito";
 

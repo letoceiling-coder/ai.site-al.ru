@@ -22,6 +22,8 @@ type EnrichedRow = {
   agentName: string | null;
   assistantId: string | null;
   assistantName: string | null;
+  dialogId: string | null;
+  routeMode: "openrouter" | "direct";
 };
 
 type UsageEventRow = {
@@ -130,6 +132,7 @@ export async function GET(request: Request) {
   const integrationId = url.searchParams.get("integrationId")?.trim() || "";
   const agentIdFilter = url.searchParams.get("agentId")?.trim() || "";
   const assistantIdFilter = url.searchParams.get("assistantId")?.trim() || "";
+  const routeModeFilter = url.searchParams.get("routeMode")?.trim() || "";
   const dateFrom = parseDate(url.searchParams.get("dateFrom"));
   const dateTo = parseDate(url.searchParams.get("dateTo"));
   const sortField = parseSortField(url.searchParams.get("sortField"));
@@ -262,6 +265,8 @@ export async function GET(request: Request) {
       agentName: agent?.name ?? null,
       assistantId: assistant?.id ?? assistantId ?? null,
       assistantName: assistant?.name ?? null,
+      dialogId: sourceType.includes("dialog") ? sourceId : null,
+      routeMode: sourceType.includes("openrouter") ? "openrouter" : "direct",
     };
   });
 
@@ -273,6 +278,9 @@ export async function GET(request: Request) {
       return false;
     }
     if (assistantIdFilter && row.assistantId !== assistantIdFilter) {
+      return false;
+    }
+    if (routeModeFilter && row.routeMode !== routeModeFilter) {
       return false;
     }
     return true;
@@ -309,8 +317,15 @@ export async function GET(request: Request) {
       acc.totalCostUsd += row.totalCostUsd;
       return acc;
     },
-    { events: 0, tokensInput: 0, tokensOutput: 0, totalTokens: 0, totalCostUsd: 0 },
+    { events: 0, tokensInput: 0, tokensOutput: 0, totalTokens: 0, totalCostUsd: 0, openrouterEvents: 0, directEvents: 0 },
   );
+  for (const row of sorted) {
+    if (row.routeMode === "openrouter") {
+      summary.openrouterEvents += 1;
+    } else {
+      summary.directEvents += 1;
+    }
+  }
 
   const byAgentMap = new Map<
     string,
@@ -389,6 +404,7 @@ export async function GET(request: Request) {
           .map((row) => [row.assistantId as string, { id: row.assistantId as string, name: row.assistantName as string }]),
       ).values(),
     ),
+    routeModes: ["openrouter", "direct"],
   };
 
   return ok({

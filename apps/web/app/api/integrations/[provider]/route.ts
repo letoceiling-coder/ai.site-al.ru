@@ -22,10 +22,54 @@ export async function PUT(request: Request, context: Context) {
   const body = (await request.json().catch(() => ({}))) as {
     apiKey?: string;
     enabled?: boolean;
+    model?: string;
+    autoRouting?: boolean;
   };
 
   const enabled = Boolean(body.enabled);
   const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+  const model = typeof body.model === "string" ? body.model.trim() : "";
+  const autoRouting = body.autoRouting !== false;
+
+  if (provider === "openrouter") {
+    const existing = await prisma.systemSetting.findFirst({
+      where: { tenantId: auth.tenantId, key: "openrouter" },
+    });
+    const current = (existing?.value ?? {}) as {
+      apiKey?: string;
+      model?: string;
+      autoRouting?: boolean;
+      lastTestAt?: string;
+      lastTestOk?: boolean;
+      lastTestMessage?: string;
+    };
+    const nextValue = {
+      ...current,
+      enabled,
+      apiKey: apiKey || current.apiKey || "",
+      model: model || current.model || "openai/gpt-4.1-mini",
+      autoRouting,
+      configuredBy: auth.userId,
+      configuredAt: new Date().toISOString(),
+    };
+    const upserted = await prisma.systemSetting.upsert({
+      where: {
+        tenantId_key: {
+          tenantId: auth.tenantId,
+          key: "openrouter",
+        },
+      },
+      create: {
+        tenantId: auth.tenantId,
+        key: "openrouter",
+        value: nextValue,
+      },
+      update: {
+        value: nextValue,
+      },
+    });
+    return ok({ integration: upserted });
+  }
 
   const existing: any = await prisma.providerIntegration.findFirst({
     where: {
