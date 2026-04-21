@@ -1043,7 +1043,9 @@ export function AgentsPageClient() {
                     <div className="chat-pending-files">
                       {chatFiles.map((file) => (
                         <span key={file.url}>
-                          {file.name}
+                          <em className="chat-file-name" title={file.name}>
+                            {file.name}
+                          </em>
                           <button
                             type="button"
                             className="button-ghost"

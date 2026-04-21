@@ -648,10 +648,7 @@ button:disabled {
   background: #eef2ff;
   font-size: 12px;
   color: #312e81;
-  max-width: 260px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: 320px;
   box-shadow: inset 0 -1px 0 rgba(79, 70, 229, 0.08);
 }
 
@@ -659,6 +656,15 @@ button:disabled {
   content: "\1F4CE";
   font-size: 12px;
   line-height: 1;
+}
+
+.chat-file-name {
+  min-width: 0;
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: normal;
 }
 
 .chat-pending-files span button {
@@ -672,6 +678,7 @@ button:disabled {
   padding: 0;
   font-size: 11px;
   line-height: 1;
+  flex: 0 0 auto;
 }
 
 .chat-pending-files span button:hover {
