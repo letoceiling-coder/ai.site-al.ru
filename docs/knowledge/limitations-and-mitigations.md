@@ -54,17 +54,6 @@ sudo -u postgres psql -d ИМЯ_БД -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 
 ### Next.js в монорепо (`npm run start -w apps/web`)
 
-Next подхватывает `.env*` из каталога **`apps/web`**, а не только из корня репозитория. Если `EMBEDDING_WORKER_SECRET` задан только в корневом `.env`, воркер вернёт `503 NOT_CONFIGURED`.
+Next по умолчанию читает `.env*` только из своего каталога (`apps/web`). Чтобы не дублировать файлы, используется загрузчик `apps/web/scripts/start-with-root-env.js` (подключён как `npm start`), который подхватывает корневые `.env`, `.env.local`, `.env.production`, `.env.production.local` и экспортирует их в процесс Next.
 
-**Решение:** продублировать нужные ключи в `apps/web/.env.production.local` (или `apps/web/.env.local`), например:
-
-```bash
-grep '^EMBEDDING_WORKER_SECRET=' /var/www/ai.site-al.ru/.env >> /var/www/ai.site-al.ru/apps/web/.env.production.local
-grep '^EMBEDDING_MODEL=' /var/www/ai.site-al.ru/.env >> /var/www/ai.site-al.ru/apps/web/.env.production.local
-grep '^OPENROUTER_EMBEDDING_MODEL=' /var/www/ai.site-al.ru/.env >> /var/www/ai.site-al.ru/apps/web/.env.production.local
-grep '^DATABASE_URL=' /var/www/ai.site-al.ru/.env >> /var/www/ai.site-al.ru/apps/web/.env.production.local
-# при необходимости:
-# echo 'NODE_ENV=production' >> .../apps/web/.env.production.local
-```
-
-Затем перезапуск `next` на порту приложения.
+Итог: **единственный `.env` — в корне** `/var/www/ai.site-al.ru/.env` (правится по SSH, в git не попадает). Никаких копий в `apps/web/.env*` держать не нужно и не следует.
