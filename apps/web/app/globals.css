@@ -926,7 +926,19 @@ button:disabled {
   font-size: 13px;
   font-weight: 600;
   background: #fff;
+  color: var(--text, #111827);
   cursor: pointer;
+}
+
+.knowledge-btn-secondary:hover {
+  background: #f9fafb;
+  color: var(--text, #111827);
+}
+
+.knowledge-btn-secondary:disabled {
+  background: #f3f4f6;
+  color: #6b7280;
+  border-color: #e5e7eb;
 }
 
 .knowledge-btn-sm {
@@ -1064,6 +1076,33 @@ button:disabled {
   background: #f3f4f6;
   padding: 1px 5px;
   border-radius: 4px;
+}
+
+.knowledge-docs ol {
+  margin: 8px 0;
+  padding-left: 1.2rem;
+}
+
+.knowledge-docs ol li {
+  margin-bottom: 6px;
+}
+
+.knowledge-docs p {
+  margin: 8px 0;
+}
+
+.knowledge-docs-code {
+  margin: 10px 0 14px;
+  padding: 12px 14px;
+  background: #0f172a;
+  color: #e5e7eb;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
 .knowledge-docs-back {
