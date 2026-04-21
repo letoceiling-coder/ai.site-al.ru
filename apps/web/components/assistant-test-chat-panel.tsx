@@ -42,6 +42,7 @@ export function AssistantTestChatPanel({ assistantId, assistantName }: Props) {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [greeting, setGreeting] = useState<{ welcomeMessage: string | null; quickReplies: string[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadSessions = useCallback(async (preferredId?: string) => {
@@ -49,7 +50,10 @@ export function AssistantTestChatPanel({ assistantId, assistantName }: Props) {
     const res = await fetch(`/api/assistants/${assistantId}/chat/sessions`);
     const body = (await res.json()) as {
       ok: boolean;
-      data?: { sessions?: ChatSession[] };
+      data?: {
+        sessions?: ChatSession[];
+        greeting?: { welcomeMessage: string | null; quickReplies: string[] };
+      };
       error?: { message?: string };
     };
     if (!res.ok || !body.ok) {
@@ -59,15 +63,28 @@ export function AssistantTestChatPanel({ assistantId, assistantName }: Props) {
     }
     const sessions = body.data?.sessions ?? [];
     setChatSessions(sessions);
+    if (body.data?.greeting) {
+      setGreeting(body.data.greeting);
+    }
     const nextId = preferredId ?? sessions[0]?.id ?? null;
     setDialogId(nextId);
     if (nextId) {
       const mr = await fetch(
         `/api/assistants/${assistantId}/chat/messages?dialogId=${encodeURIComponent(nextId)}`,
       );
-      const mb = (await mr.json()) as { ok: boolean; data?: { messages?: ChatMessage[] }; error?: { message?: string } };
+      const mb = (await mr.json()) as {
+        ok: boolean;
+        data?: {
+          messages?: ChatMessage[];
+          greeting?: { welcomeMessage: string | null; quickReplies: string[] };
+        };
+        error?: { message?: string };
+      };
       if (mr.ok && mb.ok && mb.data?.messages) {
         setChatMessages(mb.data.messages);
+        if (mb.data.greeting) {
+          setGreeting(mb.data.greeting);
+        }
       } else {
         setChatMessages([]);
       }
@@ -277,32 +294,53 @@ export function AssistantTestChatPanel({ assistantId, assistantName }: Props) {
         </div>
       </div>
       <div className="agent-chat-body telegram-chat-body" style={{ minHeight: 200 }}>
-        {chatMessages.length === 0 ? (
-          <p style={{ color: "var(--muted)" }}>Напишите сообщение для проверки ассистента.</p>
-        ) : (
-          chatMessages.map((m) => (
-            <div
-              key={m.id}
-              className={`telegram-row ${m.role === "USER" ? "telegram-row-user" : "telegram-row-assistant"}`}
-            >
-              <div className={`chat-bubble telegram-bubble ${m.role === "USER" ? "chat-user" : "chat-assistant"}`}>
-                <p>{m.text}</p>
-                {m.attachments.length > 0 ? (
-                  <div className="chat-attachments">
-                    {m.attachments.map((f) => (
-                      <a key={f.url} href={f.url} target="_blank" rel="noreferrer">
-                        {f.name}
-                      </a>
-                    ))}
-                  </div>
-                ) : null}
-                <small>{asLocalDate(m.createdAt)}</small>
-              </div>
+        {chatMessages.length === 0 && greeting?.welcomeMessage ? (
+          <div className="telegram-row telegram-row-assistant">
+            <div className="chat-bubble telegram-bubble chat-assistant">
+              <p>{greeting.welcomeMessage}</p>
             </div>
-          ))
-        )}
+          </div>
+        ) : null}
+        {chatMessages.length === 0 && !greeting?.welcomeMessage ? (
+          <p style={{ color: "var(--muted)" }}>Напишите сообщение для проверки ассистента.</p>
+        ) : null}
+        {chatMessages.map((m) => (
+          <div
+            key={m.id}
+            className={`telegram-row ${m.role === "USER" ? "telegram-row-user" : "telegram-row-assistant"}`}
+          >
+            <div className={`chat-bubble telegram-bubble ${m.role === "USER" ? "chat-user" : "chat-assistant"}`}>
+              <p>{m.text}</p>
+              {m.attachments.length > 0 ? (
+                <div className="chat-attachments">
+                  {m.attachments.map((f) => (
+                    <a key={f.url} href={f.url} target="_blank" rel="noreferrer">
+                      {f.name}
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+              <small>{asLocalDate(m.createdAt)}</small>
+            </div>
+          </div>
+        ))}
         {chatLoading ? <p style={{ color: "var(--muted)" }}>Ассистент печатает…</p> : null}
       </div>
+      {chatMessages.length === 0 && greeting?.quickReplies && greeting.quickReplies.length > 0 ? (
+        <div className="assistant-quick-replies">
+          {greeting.quickReplies.map((reply) => (
+            <button
+              key={reply}
+              type="button"
+              className="assistant-quick-reply"
+              onClick={() => setChatInput(reply)}
+              disabled={chatLoading}
+            >
+              {reply}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {chatFiles.length > 0 ? (
         <div className="chat-pending-files">
           {chatFiles.map((f) => (

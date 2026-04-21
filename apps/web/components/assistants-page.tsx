@@ -577,6 +577,96 @@ export function AssistantsPageClient() {
                     placeholder="Например: Консультант ювелирного магазина"
                   />
                 </label>
+
+                <label className="assistant-persona-role">
+                  Приветственное сообщение
+                  <textarea
+                    className="assistant-persona-list-textarea"
+                    value={draft.persona.welcomeMessage}
+                    maxLength={600}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        persona: { ...d.persona, welcomeMessage: e.target.value },
+                      }))
+                    }
+                    placeholder="Покажется пользователю при открытии чата."
+                  />
+                </label>
+
+                <label className="assistant-persona-role">
+                  Быстрые подсказки (по одной на строке, до 8)
+                  <textarea
+                    className="assistant-persona-list-textarea"
+                    value={draft.persona.quickReplies.join("\n")}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        persona: {
+                          ...d.persona,
+                          quickReplies: e.target.value
+                            .split("\n")
+                            .map((v) => v.trim())
+                            .filter(Boolean)
+                            .slice(0, 8),
+                        },
+                      }))
+                    }
+                    placeholder={"Режим работы\nДоставка\nВозврат\nСвязь с оператором"}
+                  />
+                </label>
+
+                <label className="assistant-persona-role">
+                  Запрещённые темы (по одной на строке)
+                  <textarea
+                    className="assistant-persona-list-textarea"
+                    value={draft.persona.bannedTopics.join("\n")}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        persona: {
+                          ...d.persona,
+                          bannedTopics: e.target.value
+                            .split("\n")
+                            .map((v) => v.trim())
+                            .filter(Boolean)
+                            .slice(0, 20),
+                        },
+                      }))
+                    }
+                    placeholder={"политика\nмедицинские диагнозы\nличные данные других клиентов"}
+                  />
+                </label>
+
+                <label className="assistant-persona-role">
+                  Обязательный дисклеймер в конце ответа
+                  <input
+                    value={draft.persona.disclaimer}
+                    maxLength={400}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        persona: { ...d.persona, disclaimer: e.target.value },
+                      }))
+                    }
+                    placeholder="Например: Информация носит справочный характер."
+                  />
+                </label>
+
+                <label className="assistant-persona-role">
+                  Фраза для передачи оператору
+                  <input
+                    value={draft.persona.handoffMessage}
+                    maxLength={400}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        persona: { ...d.persona, handoffMessage: e.target.value },
+                      }))
+                    }
+                    placeholder="Например: Сейчас подключу живого специалиста."
+                  />
+                </label>
               </div>
             ) : null}
 

@@ -2,6 +2,7 @@ import { prisma } from "@ai/db";
 import { fail, ok } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
 import { buildMessageContent, parseMessageContent } from "@/lib/agent-chat";
+import { extractAssistantSettings } from "@/lib/assistant-settings";
 
 type Context = { params: Promise<{ assistantId: string }> };
 
@@ -40,13 +41,24 @@ export async function GET(request: Request, context: Context) {
   if (!dialog) {
     return fail("Диалог не найден", "NOT_FOUND", 404);
   }
-  const messages = await prisma.message.findMany({
-    where: { tenantId: auth.tenantId, dialogId },
-    orderBy: { createdAt: "asc" },
-    take: 300,
-  });
+  const [messages, assistant] = await Promise.all([
+    prisma.message.findMany({
+      where: { tenantId: auth.tenantId, dialogId },
+      orderBy: { createdAt: "asc" },
+      take: 300,
+    }),
+    prisma.assistant.findFirst({
+      where: { id: assistantId, tenantId: auth.tenantId, deletedAt: null },
+      select: { settingsJson: true },
+    }),
+  ]);
+  const persona = extractAssistantSettings(assistant?.settingsJson);
   return ok({
     dialog: { id: dialog.id, status: dialog.status, createdAt: dialog.createdAt.toISOString() },
     messages: messages.map(normalizeMessage),
+    greeting: {
+      welcomeMessage: persona.welcomeMessage || null,
+      quickReplies: persona.quickReplies.length > 0 ? persona.quickReplies : [],
+    },
   });
 }

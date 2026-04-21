@@ -1474,6 +1474,39 @@ button:disabled {
   grid-column: 1 / -1;
 }
 
+.assistant-quick-replies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px 0;
+}
+
+.assistant-quick-reply {
+  font-size: 12px;
+  padding: 6px 12px;
+  background: #eef2ff;
+  color: #3730a3;
+  border: 1px solid #c7d2fe;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.assistant-quick-reply:hover {
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+}
+
+.assistant-quick-reply:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.assistant-persona-list-textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+
 .agent-form--compact h3 {
   font-size: 15px;
   margin-bottom: 8px;

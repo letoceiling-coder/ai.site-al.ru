@@ -1,8 +1,17 @@
 import { prisma } from "@ai/db";
 import { fail, ok } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
+import { extractAssistantSettings } from "@/lib/assistant-settings";
 
 type Context = { params: Promise<{ assistantId: string }> };
+
+function pickGreeting(assistant: { settingsJson: unknown }) {
+  const persona = extractAssistantSettings(assistant.settingsJson);
+  return {
+    welcomeMessage: persona.welcomeMessage || null,
+    quickReplies: persona.quickReplies.length > 0 ? persona.quickReplies : [],
+  };
+}
 
 export async function GET(_: Request, context: Context) {
   const auth = await getAuthContext();
@@ -12,7 +21,7 @@ export async function GET(_: Request, context: Context) {
   const { assistantId } = await context.params;
   const assistant = await prisma.assistant.findFirst({
     where: { id: assistantId, tenantId: auth.tenantId, deletedAt: null },
-    select: { id: true },
+    select: { id: true, settingsJson: true },
   });
   if (!assistant) {
     return fail("Ассистент не найден", "NOT_FOUND", 404);
@@ -34,6 +43,7 @@ export async function GET(_: Request, context: Context) {
       createdAt: d.createdAt.toISOString(),
       updatedAt: d.updatedAt.toISOString(),
     })),
+    greeting: pickGreeting(assistant),
   });
 }
 
@@ -58,5 +68,8 @@ export async function POST(_: Request, context: Context) {
       metadata: { mode: "assistant_test_chat", assistantId },
     },
   });
-  return ok({ dialog: { id: dialog.id, status: dialog.status, createdAt: dialog.createdAt.toISOString() } });
+  return ok({
+    dialog: { id: dialog.id, status: dialog.status, createdAt: dialog.createdAt.toISOString() },
+    greeting: pickGreeting(assistant),
+  });
 }

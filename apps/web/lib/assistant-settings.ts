@@ -27,6 +27,19 @@ export type AssistantPersonaSettings = {
    * Необязательно — если пусто, директива не добавляется.
    */
   role: string;
+  /** Приветственное сообщение ассистента (отдаётся в UI для новой сессии). */
+  welcomeMessage: string;
+  /** Быстрые кнопки-подсказки под сообщением (chips). */
+  quickReplies: string[];
+  /** Темы/слова, на которые нельзя отвечать. */
+  bannedTopics: string[];
+  /** Обязательный дисклеймер в конце ответа. */
+  disclaimer: string;
+  /**
+   * Фраза, которую ассистент произносит при эскалации на оператора
+   * (напр. «Я переключу вас на живого специалиста»).
+   */
+  handoffMessage: string;
 };
 
 export const DEFAULT_ASSISTANT_SETTINGS: AssistantPersonaSettings = {
@@ -36,6 +49,11 @@ export const DEFAULT_ASSISTANT_SETTINGS: AssistantPersonaSettings = {
   language: "auto",
   useEmoji: false,
   role: "",
+  welcomeMessage: "",
+  quickReplies: [],
+  bannedTopics: [],
+  disclaimer: "",
+  handoffMessage: "",
 };
 
 const VALID_TEMPLATES: AssistantTemplate[] = [
@@ -79,7 +97,15 @@ export const ASSISTANT_TEMPLATES: AssistantTemplatePreset[] = [
       "Если в базе нет ответа — честно скажи, что не нашёл информации, и предложи связаться с оператором.",
       "Не придумывай цены, сроки и условия, если они не указаны в базе.",
     ].join(" "),
-    persona: { template: "support", tone: "friendly", length: "short", useEmoji: false },
+    persona: {
+      template: "support",
+      tone: "friendly",
+      length: "short",
+      useEmoji: false,
+      welcomeMessage: "Здравствуйте! Я виртуальный помощник поддержки. Чем могу помочь?",
+      quickReplies: ["Режим работы", "Доставка и оплата", "Возврат товара", "Связаться с оператором"],
+      handoffMessage: "Сейчас подключу к вам живого специалиста — он ответит в ближайшее время.",
+    },
   },
   {
     id: "sales",
@@ -91,7 +117,15 @@ export const ASSISTANT_TEMPLATES: AssistantTemplatePreset[] = [
       "Задавай уточняющие вопросы о потребностях, бюджете и сроках. Делай 1-2 коротких предложения и паузу для ответа клиента.",
       "Не давай скидок и не обещай ничего, чего нет в базе знаний. Если клиент готов — предложи оставить контакт или связаться с менеджером.",
     ].join(" "),
-    persona: { template: "sales", tone: "friendly", length: "short", useEmoji: true },
+    persona: {
+      template: "sales",
+      tone: "friendly",
+      length: "short",
+      useEmoji: true,
+      welcomeMessage: "Здравствуйте! Помогу подобрать подходящий вариант. Что ищете?",
+      quickReplies: ["Подобрать по цене", "Что в наличии?", "Скидки и акции", "Оставить заявку"],
+      handoffMessage: "Передам ваш запрос менеджеру — он свяжется с вами в рабочее время.",
+    },
   },
   {
     id: "concierge",
@@ -103,7 +137,15 @@ export const ASSISTANT_TEMPLATES: AssistantTemplatePreset[] = [
       "Всегда уточняй имя, удобную дату и время, телефон для подтверждения.",
       "Если услуги нет в базе знаний — скажи, что уточнишь у специалиста.",
     ].join(" "),
-    persona: { template: "concierge", tone: "friendly", length: "short", useEmoji: false },
+    persona: {
+      template: "concierge",
+      tone: "friendly",
+      length: "short",
+      useEmoji: false,
+      welcomeMessage: "Здравствуйте! Помогу записаться и ответить по услугам. На что вас записать?",
+      quickReplies: ["Записаться", "График работы", "Стоимость услуг", "Отменить запись"],
+      handoffMessage: "Передаю обращение администратору — он подтвердит детали записи.",
+    },
   },
   {
     id: "expert",
@@ -115,7 +157,14 @@ export const ASSISTANT_TEMPLATES: AssistantTemplatePreset[] = [
       "Сравнивай варианты по характеристикам, объясняй разницу, приводи примеры применения.",
       "Если данных о товаре нет в базе — честно скажи об этом.",
     ].join(" "),
-    persona: { template: "expert", tone: "neutral", length: "detailed", useEmoji: false },
+    persona: {
+      template: "expert",
+      tone: "neutral",
+      length: "detailed",
+      useEmoji: false,
+      welcomeMessage: "Здравствуйте. Подробно расскажу о продуктах и помогу выбрать. О чём рассказать?",
+      quickReplies: ["Сравнить модели", "Характеристики", "Совместимость", "Рекомендации"],
+    },
   },
   {
     id: "techsupport",
@@ -127,7 +176,15 @@ export const ASSISTANT_TEMPLATES: AssistantTemplatePreset[] = [
       "Задавай уточняющие вопросы (ОС, версия, шаги воспроизведения, текст ошибки). Предлагай проверки по шагам.",
       "Если проблема не решается или выходит за рамки базы знаний — эскалируй на инженера.",
     ].join(" "),
-    persona: { template: "techsupport", tone: "neutral", length: "normal", useEmoji: false },
+    persona: {
+      template: "techsupport",
+      tone: "neutral",
+      length: "normal",
+      useEmoji: false,
+      welcomeMessage: "Здравствуйте. Опишите проблему: ОС/версия, что делаете, что получаете.",
+      quickReplies: ["Не могу войти", "Ошибка оплаты", "Медленно работает", "Связь с инженером"],
+      handoffMessage: "Эскалирую запрос в инженерную команду — они подключатся к задаче.",
+    },
   },
   {
     id: "legal",
@@ -139,7 +196,16 @@ export const ASSISTANT_TEMPLATES: AssistantTemplatePreset[] = [
       "Формулируй чётко, со ссылками на пункты документов. Никогда не придумывай нормы права.",
       "Всегда добавляй оговорку: «Это справочная информация, для официальной позиции обратитесь к юристу компании».",
     ].join(" "),
-    persona: { template: "legal", tone: "formal", length: "detailed", useEmoji: false },
+    persona: {
+      template: "legal",
+      tone: "formal",
+      length: "detailed",
+      useEmoji: false,
+      welcomeMessage: "Здравствуйте. Отвечаю по регламентам и договорам компании. Какой у вас вопрос?",
+      quickReplies: ["Условия возврата", "Договор оферты", "Политика конфиденциальности", "Персональные данные"],
+      disclaimer: "Это справочная информация. Для официальной позиции обратитесь к юристу компании.",
+      handoffMessage: "Передам запрос корпоративному юристу.",
+    },
   },
 ];
 
@@ -174,6 +240,27 @@ export function normalizeAssistantSettings(raw: unknown): AssistantPersonaSettin
   }
   if (typeof value.role === "string") {
     base.role = value.role.slice(0, 240).trim();
+  }
+  if (typeof value.welcomeMessage === "string") {
+    base.welcomeMessage = value.welcomeMessage.slice(0, 600).trim();
+  }
+  if (Array.isArray(value.quickReplies)) {
+    base.quickReplies = value.quickReplies
+      .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      .map((item) => item.trim().slice(0, 80))
+      .slice(0, 8);
+  }
+  if (Array.isArray(value.bannedTopics)) {
+    base.bannedTopics = value.bannedTopics
+      .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      .map((item) => item.trim().slice(0, 80))
+      .slice(0, 20);
+  }
+  if (typeof value.disclaimer === "string") {
+    base.disclaimer = value.disclaimer.slice(0, 400).trim();
+  }
+  if (typeof value.handoffMessage === "string") {
+    base.handoffMessage = value.handoffMessage.slice(0, 400).trim();
   }
   return base;
 }
@@ -224,6 +311,25 @@ export function buildPersonaDirectives(settings: AssistantPersonaSettings): stri
     parts.push("Не используй эмодзи.");
   }
 
+  if (settings.bannedTopics.length > 0) {
+    parts.push(
+      `Запрещённые темы (никогда не обсуждай и не давай советов): ${settings.bannedTopics.join(", ")}. ` +
+        "Если пользователь спрашивает об этом — вежливо откажись и предложи релевантную помощь.",
+    );
+  }
+
+  if (settings.handoffMessage.trim()) {
+    parts.push(
+      `Если ты не можешь помочь или тебя просят соединить с человеком — используй фразу: «${settings.handoffMessage.trim()}».`,
+    );
+  }
+
+  if (settings.disclaimer.trim()) {
+    parts.push(
+      `В конце каждого содержательного ответа добавляй дисклеймер отдельным абзацем: «${settings.disclaimer.trim()}».`,
+    );
+  }
+
   return parts.join(" ");
 }
 
@@ -255,5 +361,10 @@ export function mergeAssistantSettings(
   base.language = merged.language;
   base.useEmoji = merged.useEmoji;
   base.role = merged.role;
+  base.welcomeMessage = merged.welcomeMessage;
+  base.quickReplies = merged.quickReplies;
+  base.bannedTopics = merged.bannedTopics;
+  base.disclaimer = merged.disclaimer;
+  base.handoffMessage = merged.handoffMessage;
   return base;
 }
