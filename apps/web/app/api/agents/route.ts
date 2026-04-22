@@ -1,46 +1,15 @@
 import { prisma } from "@ai/db";
 import { fail, ok } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
+import { PROVIDER_MODEL_DEFAULTS } from "@/lib/tenant-ai-integrations";
 
 type ProviderType = "OPENAI" | "ANTHROPIC" | "GEMINI" | "XAI" | "REPLICATE" | "ELEVENLABS" | "OPENROUTER";
 type AgentStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
 
-const providerDefaults: Record<ProviderType, string[]> = {
-  OPENAI: [
-    "gpt-4.1",
-    "gpt-4.1-mini",
-    "gpt-4.1-nano",
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4-turbo",
-    "gpt-3.5-turbo",
-    "o1",
-    "o1-mini",
-    "o3-mini",
-  ],
-  ANTHROPIC: [
-    "claude-3-7-sonnet-latest",
-    "claude-3-5-sonnet-latest",
-    "claude-3-5-haiku-latest",
-    "claude-3-opus-latest",
-  ],
-  GEMINI: [
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-pro",
-    "gemini-1.5-flash",
-  ],
-  XAI: ["grok-3-beta", "grok-2-1212", "grok-2-vision-1212", "grok-beta"],
-  REPLICATE: [
-    "meta/llama-3.1-405b-instruct",
-    "meta/llama-3.1-70b-instruct",
-    "meta/llama-3.1-8b-instruct",
-    "mistralai/mistral-7b-instruct-v0.2",
-  ],
-  ELEVENLABS: ["eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5"],
-  OPENROUTER: ["openai/gpt-4.1-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001"],
-};
+const providerDefaults: Record<ProviderType, string[]> = PROVIDER_MODEL_DEFAULTS as Record<
+  ProviderType,
+  string[]
+>;
 
 type AgentPayload = {
   name?: unknown;

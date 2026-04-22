@@ -1,40 +1,67 @@
 import { prisma } from "@ai/db";
 
-const providerDefaults: Record<string, string[]> = {
+// Справочник моделей на 22 апреля 2026. Новые модели — в начале списка.
+// Удалены модели, по которым API возвращает 404 (o1-mini, gpt-4.5-preview,
+// claude-3-*-latest алиасы, все gemini-1.5-*). Сохранены текущие legacy.
+export const PROVIDER_MODEL_DEFAULTS: Record<string, string[]> = {
   OPENAI: [
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.3",
+    "gpt-5.2",
+    "gpt-5.2-pro",
+    "gpt-5.1",
+    "gpt-5",
+    "gpt-5-pro",
+    "gpt-5-mini",
+    "gpt-5-nano",
+    "o3",
+    "o3-pro",
+    "o3-mini",
+    "o4-mini",
+    "o1",
+    "o1-pro",
     "gpt-4.1",
     "gpt-4.1-mini",
     "gpt-4.1-nano",
     "gpt-4o",
     "gpt-4o-mini",
     "gpt-4-turbo",
-    "gpt-3.5-turbo",
-    "o1",
-    "o1-mini",
-    "o3-mini",
   ],
   ANTHROPIC: [
-    "claude-3-7-sonnet-latest",
-    "claude-3-5-sonnet-latest",
-    "claude-3-5-haiku-latest",
-    "claude-3-opus-latest",
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "claude-opus-4-6",
+    "claude-sonnet-4-5",
+    "claude-opus-4-5",
+    "claude-opus-4-1",
   ],
   GEMINI: [
+    "gemini-3.1-pro",
+    "gemini-3-flash",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-pro",
-    "gemini-1.5-flash",
+    "gemini-2.5-flash-lite",
   ],
-  XAI: ["grok-3-beta", "grok-2-1212", "grok-2-vision-1212", "grok-beta"],
+  XAI: ["grok-4", "grok-3", "grok-3-mini", "grok-3-beta"],
   REPLICATE: [
+    "meta/llama-3.3-70b-instruct",
     "meta/llama-3.1-405b-instruct",
     "meta/llama-3.1-70b-instruct",
     "meta/llama-3.1-8b-instruct",
-    "mistralai/mistral-7b-instruct-v0.2",
+    "mistralai/mistral-large-2411",
   ],
   ELEVENLABS: ["eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5"],
-  OPENROUTER: ["openai/gpt-4.1-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001"],
+  OPENROUTER: [
+    "openai/gpt-5.4-mini",
+    "openai/gpt-5.4",
+    "anthropic/claude-sonnet-4-6",
+    "anthropic/claude-haiku-4-5",
+    "google/gemini-2.5-flash",
+    "google/gemini-2.5-pro",
+  ],
 };
 
 export function isConnectedIntegration(integration: {
@@ -67,7 +94,7 @@ export async function buildModelOptions(tenantId: string) {
       options[row.provider].push(row.modelCode);
     }
   }
-  for (const [provider, defaults] of Object.entries(providerDefaults)) {
+  for (const [provider, defaults] of Object.entries(PROVIDER_MODEL_DEFAULTS)) {
     if (!options[provider] || options[provider].length === 0) {
       options[provider] = defaults;
     }
@@ -119,7 +146,7 @@ export async function getConnectedIntegrationsWithModels(tenantId: string) {
     });
   }
   const presetModel = typeof openrouter.model === "string" && openrouter.model.trim() ? openrouter.model.trim() : null;
-  const base = modelOptions.OPENROUTER ?? providerDefaults.OPENROUTER;
+  const base = modelOptions.OPENROUTER ?? PROVIDER_MODEL_DEFAULTS.OPENROUTER;
   modelOptions.OPENROUTER = presetModel ? Array.from(new Set([presetModel, ...base])) : base;
 
   return { connectedIntegrations, modelOptions };
