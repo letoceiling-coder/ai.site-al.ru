@@ -6,7 +6,9 @@ import {
   chunkTextStructured,
   createDocumentWithChunks,
   deriveTitleFromText,
+  findDuplicateItemByContentSha,
   MAX_KNOWLEDGE_TEXT_CHARS,
+  sha256OfText,
   TEXT_CHUNK_THRESHOLD,
 } from "@/lib/knowledge-ingest";
 import { processQueuedUrlKnowledgeItem } from "@/lib/url-ingest";
@@ -90,40 +92,64 @@ export async function POST(request: Request, context: Ctx) {
     return fail("Укажите заголовок", "VALIDATION_ERROR", 400);
   }
 
-  if (st === "TEXT" && content.length > TEXT_CHUNK_THRESHOLD) {
-    const pieces = chunkTextStructured(content, settings.chunkSize, settings.chunkOverlap);
-    if (pieces.length === 0) {
-      return fail("Не удалось разбить текст на фрагменты", "VALIDATION_ERROR", 400);
-    }
-    const item = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const row = await tx.knowledgeItem.create({
-        data: {
-          tenantId: auth.tenantId,
-          knowledgeBaseId,
-          sourceType: "TEXT",
-          title,
-          content: content.slice(0, 8000),
-          status: "COMPLETED",
-          metadata: {
-            chunked: true,
-            fullCharCount: content.length,
-            chunkCount: pieces.length,
-            chunkSize: settings.chunkSize,
-            chunkOverlap: settings.chunkOverlap,
-          } as object,
-        },
-      });
-      await createDocumentWithChunks(tx, {
-        tenantId: auth.tenantId,
-        knowledgeItemId: row.id,
-        objectKey: `inline/${auth.tenantId}/${row.id}.txt`,
-        mimeType: "text/plain",
-        fileSize: content.length,
-        pieces,
-      });
-      return row;
+  // A9: дедупликация TEXT по SHA-256. Если в этой же базе уже есть материал
+  // с тем же нормализованным содержимым — возвращаем существующий, не плодим чанки.
+  if (st === "TEXT") {
+    const contentSha256 = sha256OfText(content);
+    const dup = await findDuplicateItemByContentSha({
+      tenantId: auth.tenantId,
+      knowledgeBaseId,
+      contentSha256,
     });
-    return ok({ item }, 201);
+    if (dup) {
+      const existing = await prisma.knowledgeItem.findFirst({
+        where: { id: dup.id, tenantId: auth.tenantId },
+      });
+      return ok(
+        {
+          item: existing,
+          duplicate: { existingItemId: dup.id, existingTitle: dup.title, sourceType: dup.sourceType },
+        },
+        200,
+      );
+    }
+
+    if (content.length > TEXT_CHUNK_THRESHOLD) {
+      const pieces = chunkTextStructured(content, settings.chunkSize, settings.chunkOverlap);
+      if (pieces.length === 0) {
+        return fail("Не удалось разбить текст на фрагменты", "VALIDATION_ERROR", 400);
+      }
+      const item = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const row = await tx.knowledgeItem.create({
+          data: {
+            tenantId: auth.tenantId,
+            knowledgeBaseId,
+            sourceType: "TEXT",
+            title,
+            content: content.slice(0, 8000),
+            status: "COMPLETED",
+            metadata: {
+              chunked: true,
+              fullCharCount: content.length,
+              chunkCount: pieces.length,
+              chunkSize: settings.chunkSize,
+              chunkOverlap: settings.chunkOverlap,
+              contentSha256,
+            } as object,
+          },
+        });
+        await createDocumentWithChunks(tx, {
+          tenantId: auth.tenantId,
+          knowledgeItemId: row.id,
+          objectKey: `inline/${auth.tenantId}/${row.id}.txt`,
+          mimeType: "text/plain",
+          fileSize: content.length,
+          pieces,
+        });
+        return row;
+      });
+      return ok({ item }, 201);
+    }
   }
 
   if (st === "URL") {
@@ -159,6 +185,9 @@ export async function POST(request: Request, context: Ctx) {
       content: st === "TEXT" ? content : null,
       sourceUrl: null,
       status: st === "TEXT" && content ? "COMPLETED" : "QUEUED",
+      ...(st === "TEXT" && content
+        ? { metadata: { contentSha256: sha256OfText(content) } as object }
+        : {}),
     },
   });
   return ok({ item }, 201);

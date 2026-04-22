@@ -101,11 +101,14 @@ export async function POST(request: Request, context: Ctx) {
     url: string;
     itemId: string | null;
     ok: boolean;
+    duplicate?: boolean;
+    duplicateOfItemId?: string;
     message?: string;
   }> = [];
 
   let created = 0;
   let failed = 0;
+  let duplicates = 0;
 
   for (const url of urls) {
     let itemId: string | null = null;
@@ -143,8 +146,18 @@ export async function POST(request: Request, context: Ctx) {
         itemId,
       });
       if (proc.ok) {
-        created += 1;
-        results.push({ url, itemId, ok: true });
+        const fresh = await prisma.knowledgeItem.findFirst({
+          where: { id: itemId, tenantId: auth.tenantId },
+          select: { metadata: true },
+        });
+        const meta = (fresh?.metadata ?? null) as { duplicateOfItemId?: string } | null;
+        if (meta?.duplicateOfItemId) {
+          duplicates += 1;
+          results.push({ url, itemId, ok: true, duplicate: true, duplicateOfItemId: meta.duplicateOfItemId });
+        } else {
+          created += 1;
+          results.push({ url, itemId, ok: true });
+        }
       } else {
         failed += 1;
         results.push({ url, itemId, ok: false, message: proc.message });
@@ -160,6 +173,7 @@ export async function POST(request: Request, context: Ctx) {
     total: urls.length,
     created,
     failed,
+    duplicates,
     results,
   });
 }

@@ -346,11 +346,22 @@ export function KnowledgePageClient() {
         sourceType: "TEXT",
       }),
     });
-    const body = (await res.json()) as { ok: boolean; error?: { message?: string } };
+    const body = (await res.json()) as {
+      ok: boolean;
+      data?: { duplicate?: { existingItemId: string; existingTitle: string; sourceType: string } };
+      error?: { message?: string };
+    };
     if (!res.ok || !body.ok) {
       setError(body.error?.message ?? "Не удалось добавить");
       setSaving(false);
       return;
+    }
+    if (body.data?.duplicate) {
+      setNotice(
+        `Такой же материал уже есть в этой базе: «${body.data.duplicate.existingTitle}». Создание дубликата пропущено.`,
+      );
+    } else {
+      setNotice(null);
     }
     setItemTitle("");
     setItemContent("");
@@ -451,7 +462,13 @@ export function KnowledgePageClient() {
     const body = (await res.json()) as {
       ok: boolean;
       error?: { message?: string };
-      data?: { total: number; created: number; failed: number; results?: Array<{ ok: boolean; url: string; message?: string }> };
+      data?: {
+        total: number;
+        created: number;
+        failed: number;
+        duplicates?: number;
+        results?: Array<{ ok: boolean; url: string; duplicate?: boolean; message?: string }>;
+      };
     };
     if (!res.ok || !body.ok) {
       setError(body.error?.message ?? "Пакетный импорт не удался");
@@ -459,7 +476,8 @@ export function KnowledgePageClient() {
       return;
     }
     const d = body.data!;
-    setNotice(`Импорт: успешно ${d.created}, с ошибками ${d.failed} из ${d.total}.`);
+    const dupPart = d.duplicates && d.duplicates > 0 ? `, дубликатов ${d.duplicates}` : "";
+    setNotice(`Импорт: успешно ${d.created}${dupPart}, с ошибками ${d.failed} из ${d.total}.`);
     if (d.failed > 0 && d.results) {
       const fails = d.results.filter((r) => !r.ok).slice(0, 5).map((r) => `${r.url}: ${r.message ?? "ошибка"}`).join(" · ");
       if (fails) setError(`Ошибки: ${fails}`);

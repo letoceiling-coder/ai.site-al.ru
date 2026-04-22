@@ -33,6 +33,52 @@ function estimateTokens(text: string) {
   return Math.max(1, Math.ceil(text.length / 4));
 }
 
+/**
+ * Канонизация текста для дедупликации: нормализуем переносы, убираем BOM,
+ * схлопываем пробелы и обрезаем края. Это делает SHA-256 устойчивым к
+ * косметическим различиям (двойные переводы строк, табы, лишние пробелы),
+ * при этом сохраняя смысл отличий для реально разных материалов.
+ */
+function canonicalizeForHash(raw: string): string {
+  if (!raw) return "";
+  return raw
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t\f\v]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .toLowerCase();
+}
+
+/** SHA-256 текста после канонизации, в hex. Используется для дедупликации TEXT/URL (A9). */
+export function sha256OfText(raw: string): string {
+  return createHash("sha256").update(canonicalizeForHash(raw), "utf8").digest("hex");
+}
+
+/**
+ * Ищет в той же базе знаний существующий материал с таким же `metadata.contentSha256`.
+ * Если найден — вернёт минимальный объект для формирования ответа о дубликате.
+ */
+export async function findDuplicateItemByContentSha(params: {
+  tenantId: string;
+  knowledgeBaseId: string;
+  contentSha256: string;
+  excludeItemId?: string;
+}): Promise<{ id: string; title: string; sourceType: "TEXT" | "URL" | "FILE"; sourceUrl: string | null } | null> {
+  if (!params.contentSha256) return null;
+  const dup = await prisma.knowledgeItem.findFirst({
+    where: {
+      tenantId: params.tenantId,
+      knowledgeBaseId: params.knowledgeBaseId,
+      metadata: { path: ["contentSha256"], equals: params.contentSha256 },
+      ...(params.excludeItemId ? { NOT: { id: params.excludeItemId } } : {}),
+    },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, title: true, sourceType: true, sourceUrl: true },
+  });
+  return dup ?? null;
+}
+
 /** Авто-заголовок из первого осмысленного предложения. */
 export function deriveTitleFromText(text: string, fallback = "Без названия", maxLen = 80): string {
   const cleaned = text.replace(/\r\n/g, "\n").trim();

@@ -5,6 +5,7 @@ import { getAuthContext } from "@/lib/auth-context";
 import {
   chunkTextStructured,
   createDocumentWithChunks,
+  sha256OfText,
 } from "@/lib/knowledge-ingest";
 import { processQueuedUrlKnowledgeItem } from "@/lib/url-ingest";
 import { resolveKnowledgeBaseSettings } from "@/lib/knowledge-settings";
@@ -65,6 +66,7 @@ export async function POST(_: Request, context: Ctx) {
             chunkCount: pieces.length,
             chunkSize: settings.chunkSize,
             chunkOverlap: settings.chunkOverlap,
+            contentSha256: sha256OfText(content),
           } as object,
         },
       });

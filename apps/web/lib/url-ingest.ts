@@ -1,6 +1,11 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@ai/db";
-import { chunkTextStructured, createDocumentWithChunks } from "@/lib/knowledge-ingest";
+import {
+  chunkTextStructured,
+  createDocumentWithChunks,
+  findDuplicateItemByContentSha,
+  sha256OfText,
+} from "@/lib/knowledge-ingest";
 import { htmlToStructuredMarkdown } from "@/lib/knowledge-chunker";
 import { resolveKnowledgeBaseSettings } from "@/lib/knowledge-settings";
 
@@ -148,6 +153,42 @@ export async function processQueuedUrlKnowledgeItem(input: {
     return { ok: false, message: "Мало текста на странице" };
   }
 
+  // A9: дедупликация по содержимому. Если в этой же базе уже есть материал
+  // с таким же SHA-256 (другой URL, но идентичный текст — зеркало, ленгвич-варианты
+  // одной страницы и т.п.) — отмечаем текущий как дубликат без создания чанков.
+  const contentSha256 = sha256OfText(plain);
+  const dup = await findDuplicateItemByContentSha({
+    tenantId: input.tenantId,
+    knowledgeBaseId: input.knowledgeBaseId,
+    contentSha256,
+    excludeItemId: item.id,
+  });
+  if (dup) {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.document.deleteMany({ where: { knowledgeItemId: item.id } });
+      await tx.knowledgeItem.update({
+        where: { id: item.id },
+        data: {
+          status: "COMPLETED",
+          content: plain.slice(0, 8000),
+          metadata: {
+            ...((item.metadata ?? {}) as object),
+            contentSha256,
+            urlFetchedAt: new Date().toISOString(),
+            urlBytes: fetched.bytes,
+            chunkCount: 0,
+            chunkSize: settings.chunkSize,
+            chunkOverlap: settings.chunkOverlap,
+            urlError: null,
+            duplicateOfItemId: dup.id,
+            duplicateOfTitle: dup.title,
+          },
+        },
+      });
+    });
+    return { ok: true };
+  }
+
   const pieces = chunkTextStructured(plain, settings.chunkSize, settings.chunkOverlap);
   if (pieces.length === 0) {
     await prisma.knowledgeItem.update({
@@ -177,12 +218,14 @@ export async function processQueuedUrlKnowledgeItem(input: {
           content: plain.slice(0, 8000),
           metadata: {
             ...metaBase,
+            contentSha256,
             urlFetchedAt: new Date().toISOString(),
             urlBytes: fetched.bytes,
             chunkCount: pieces.length,
             chunkSize: settings.chunkSize,
             chunkOverlap: settings.chunkOverlap,
             urlError: null,
+            duplicateOfItemId: null,
           },
         },
       });
