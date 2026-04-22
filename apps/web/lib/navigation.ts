@@ -3,6 +3,7 @@ export const adminMenu = [
   { href: "/integrations", title: "Интеграция AI", icon: "◎" },
   { href: "/agents", title: "Агенты", icon: "◉" },
   { href: "/knowledge", title: "База знаний", icon: "⌘" },
+  { href: "/knowledge/health", title: "Здоровье БЗ", icon: "♥" },
   { href: "/docs/knowledge", title: "Справка: база знаний", icon: "?" },
   { href: "/assistants", title: "Ассистенты", icon: "◈" },
   { href: "/docs/assistants", title: "Справка: ассистенты", icon: "?" },
