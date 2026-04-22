@@ -2,6 +2,8 @@ import { prisma } from "@ai/db";
 import { fail, ok } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
 import { buildAssistantReply, buildMessageContent, parseMessageContent } from "@/lib/agent-chat";
+import { markDialogQueuedForOperator } from "@/lib/dialog-handoff";
+import { publishOperatorEvent } from "@/lib/operator-events";
 
 type Context = {
   params: Promise<{ agentId: string }>;
@@ -155,6 +157,7 @@ export async function POST(request: Request, context: Context) {
     },
   });
 
+  let queuedForOperator = false;
   for (const event of reply.toolEvents ?? []) {
     await prisma.toolCall.create({
       data: {
@@ -166,6 +169,30 @@ export async function POST(request: Request, context: Context) {
         outputJson: event.outputJson as never,
       },
     });
+    if (event.toolName === "handoff_to_operator" && event.status === "COMPLETED") {
+      const input = (event.inputJson ?? {}) as {
+        reason?: unknown;
+        urgency?: unknown;
+        summary?: unknown;
+      };
+      const urgencyRaw = typeof input.urgency === "string" ? input.urgency.toLowerCase() : "";
+      const urgency: "low" | "normal" | "high" | undefined =
+        urgencyRaw === "low" || urgencyRaw === "high"
+          ? (urgencyRaw as "low" | "high")
+          : urgencyRaw === "normal"
+            ? "normal"
+            : undefined;
+      await markDialogQueuedForOperator(auth.tenantId, dialogId, {
+        reason: typeof input.reason === "string" ? input.reason.slice(0, 1000) : undefined,
+        urgency,
+        summary: typeof input.summary === "string" ? input.summary.slice(0, 2000) : undefined,
+      });
+      queuedForOperator = true;
+    }
+  }
+  if (queuedForOperator) {
+    publishOperatorEvent({ type: "queue", tenantId: auth.tenantId });
+    publishOperatorEvent({ type: "dialog-updated", tenantId: auth.tenantId, dialogId });
   }
 
   await prisma.usageEvent.create({

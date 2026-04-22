@@ -2,6 +2,8 @@ import { prisma } from "@ai/db";
 import { fail } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
 import { buildAssistantReply, buildMessageContent } from "@/lib/agent-chat";
+import { extractHandoff, markDialogQueuedForOperator } from "@/lib/dialog-handoff";
+import { publishOperatorEvent } from "@/lib/operator-events";
 
 type Context = {
   params: Promise<{ agentId: string }>;
@@ -43,6 +45,66 @@ export async function POST(request: Request, context: Context) {
         .slice(0, 10)
     : [];
 
+  const existingAssistant = await prisma.assistant.findFirst({
+    where: { tenantId: auth.tenantId, agentId, deletedAt: null },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+
+  let dialogId = typeof body.dialogId === "string" ? body.dialogId.trim() : "";
+  let preDialog = dialogId && existingAssistant
+    ? await prisma.dialog.findFirst({
+        where: {
+          id: dialogId,
+          tenantId: auth.tenantId,
+          assistantId: existingAssistant.id,
+        },
+      })
+    : null;
+
+  if (preDialog) {
+    const handoffBefore = extractHandoff(preDialog.metadata);
+    if (handoffBefore.state === "takenOver") {
+      await prisma.message.create({
+        data: {
+          tenantId: auth.tenantId,
+          dialogId: preDialog.id,
+          userId: auth.userId,
+          role: "USER",
+          content: buildMessageContent(text, attachments),
+        },
+      });
+      publishOperatorEvent({
+        type: "dialog-message",
+        tenantId: auth.tenantId,
+        dialogId: preDialog.id,
+      });
+      const encoder = new TextEncoder();
+      const waitStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const send = (payload: Record<string, unknown>) => {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+          };
+          send({ type: "meta", dialogId: preDialog!.id, routeMode: "operator" });
+          send({
+            type: "handoff",
+            state: "takenOver",
+            operator: handoffBefore.takenOverByEmail ?? null,
+          });
+          send({ type: "done", text: "", info: "operator_takeover" });
+          controller.close();
+        },
+      });
+      return new Response(waitStream, {
+        headers: {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+        },
+      });
+    }
+  }
+
   const reply = await buildAssistantReply({
     tenantId: auth.tenantId,
     userId: auth.userId,
@@ -54,16 +116,18 @@ export async function POST(request: Request, context: Context) {
     throw new Error(message);
   });
 
-  let dialogId = typeof body.dialogId === "string" ? body.dialogId.trim() : "";
-  let dialog = dialogId
-    ? await prisma.dialog.findFirst({
-        where: {
-          id: dialogId,
-          tenantId: auth.tenantId,
-          assistantId: reply.assistant.id,
-        },
-      })
-    : null;
+  let dialog = preDialog ?? null;
+  if (!dialog) {
+    dialog = dialogId
+      ? await prisma.dialog.findFirst({
+          where: {
+            id: dialogId,
+            tenantId: auth.tenantId,
+            assistantId: reply.assistant.id,
+          },
+        })
+      : null;
+  }
 
   if (!dialog) {
     dialog = await prisma.dialog.create({
@@ -123,6 +187,7 @@ export async function POST(request: Request, context: Context) {
           },
         });
 
+        let queuedForOperator = false;
         for (const event of reply.toolEvents ?? []) {
           await prisma.toolCall.create({
             data: {
@@ -140,6 +205,31 @@ export async function POST(request: Request, context: Context) {
             status: event.status,
             summary: event.resultText,
           });
+          if (event.toolName === "handoff_to_operator" && event.status === "COMPLETED") {
+            const input = (event.inputJson ?? {}) as {
+              reason?: unknown;
+              urgency?: unknown;
+              summary?: unknown;
+            };
+            const urgencyRaw = typeof input.urgency === "string" ? input.urgency.toLowerCase() : "";
+            const urgency: "low" | "normal" | "high" | undefined =
+              urgencyRaw === "low" || urgencyRaw === "high"
+                ? (urgencyRaw as "low" | "high")
+                : urgencyRaw === "normal"
+                  ? "normal"
+                  : undefined;
+            await markDialogQueuedForOperator(auth.tenantId, dialogId, {
+              reason: typeof input.reason === "string" ? input.reason.slice(0, 1000) : undefined,
+              urgency,
+              summary: typeof input.summary === "string" ? input.summary.slice(0, 2000) : undefined,
+            });
+            queuedForOperator = true;
+          }
+        }
+        if (queuedForOperator) {
+          publishOperatorEvent({ type: "queue", tenantId: auth.tenantId });
+          publishOperatorEvent({ type: "dialog-updated", tenantId: auth.tenantId, dialogId });
+          send({ type: "handoff", state: "queued" });
         }
 
         await prisma.usageEvent.create({

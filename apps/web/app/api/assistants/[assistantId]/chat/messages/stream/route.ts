@@ -2,6 +2,8 @@ import { prisma } from "@ai/db";
 import { fail } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
 import { buildAssistantReplyForUserAssistant, buildMessageContent } from "@/lib/agent-chat";
+import { extractHandoff, markDialogQueuedForOperator } from "@/lib/dialog-handoff";
+import { publishOperatorEvent } from "@/lib/operator-events";
 
 type Context = { params: Promise<{ assistantId: string }> };
 type StreamPayload = {
@@ -34,16 +36,14 @@ export async function POST(request: Request, context: Context) {
         .slice(0, 10)
     : [];
 
-  const reply = await buildAssistantReplyForUserAssistant({
-    tenantId: auth.tenantId,
-    assistantId,
-    userText: text,
-    attachments,
-  }).catch((e) => {
-    throw e instanceof Error ? e : new Error("Reply failed");
+  const assistantRow = await prisma.assistant.findFirst({
+    where: { id: assistantId, tenantId: auth.tenantId, deletedAt: null },
+    select: { id: true },
   });
+  if (!assistantRow) {
+    return fail("Assistant not found", "NOT_FOUND", 404);
+  }
 
-  const assistantRow = reply.assistant;
   let dialogId = typeof body.dialogId === "string" ? body.dialogId.trim() : "";
   let dialog = dialogId
     ? await prisma.dialog.findFirst({
@@ -62,6 +62,56 @@ export async function POST(request: Request, context: Context) {
     });
   }
   dialogId = dialog.id;
+  const handoffBefore = extractHandoff(dialog.metadata);
+
+  if (handoffBefore.state === "takenOver") {
+    await prisma.message.create({
+      data: {
+        tenantId: auth.tenantId,
+        dialogId,
+        userId: auth.userId,
+        role: "USER",
+        content: buildMessageContent(text, attachments),
+      },
+    });
+    publishOperatorEvent({ type: "dialog-message", tenantId: auth.tenantId, dialogId });
+    const encoder = new TextEncoder();
+    const waitStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const send = (payload: Record<string, unknown>) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+        };
+        send({ type: "meta", dialogId, routeMode: "operator" });
+        send({
+          type: "handoff",
+          state: "takenOver",
+          operator: handoffBefore.takenOverByEmail ?? null,
+        });
+        send({
+          type: "done",
+          text: "",
+          info: "operator_takeover",
+        });
+        controller.close();
+      },
+    });
+    return new Response(waitStream, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  const reply = await buildAssistantReplyForUserAssistant({
+    tenantId: auth.tenantId,
+    assistantId,
+    userText: text,
+    attachments,
+  }).catch((e) => {
+    throw e instanceof Error ? e : new Error("Reply failed");
+  });
 
   await prisma.message.create({
     data: {
@@ -102,6 +152,7 @@ export async function POST(request: Request, context: Context) {
             model: reply.modelForUsage,
           },
         });
+        let queuedForOperator = false;
         for (const event of reply.toolEvents ?? []) {
           await prisma.toolCall.create({
             data: {
@@ -119,6 +170,31 @@ export async function POST(request: Request, context: Context) {
             status: event.status,
             summary: event.resultText,
           });
+          if (event.toolName === "handoff_to_operator" && event.status === "COMPLETED") {
+            const input = (event.inputJson ?? {}) as {
+              reason?: unknown;
+              urgency?: unknown;
+              summary?: unknown;
+            };
+            const urgencyRaw = typeof input.urgency === "string" ? input.urgency.toLowerCase() : "";
+            const urgency: "low" | "normal" | "high" | undefined =
+              urgencyRaw === "low" || urgencyRaw === "high"
+                ? (urgencyRaw as "low" | "high")
+                : urgencyRaw === "normal"
+                  ? "normal"
+                  : undefined;
+            await markDialogQueuedForOperator(auth.tenantId, dialogId, {
+              reason: typeof input.reason === "string" ? input.reason.slice(0, 1000) : undefined,
+              urgency,
+              summary: typeof input.summary === "string" ? input.summary.slice(0, 2000) : undefined,
+            });
+            queuedForOperator = true;
+          }
+        }
+        if (queuedForOperator) {
+          publishOperatorEvent({ type: "queue", tenantId: auth.tenantId });
+          publishOperatorEvent({ type: "dialog-updated", tenantId: auth.tenantId, dialogId });
+          send({ type: "handoff", state: "queued" });
         }
         await prisma.usageEvent.create({
           data: {
