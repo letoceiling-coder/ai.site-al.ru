@@ -3,6 +3,32 @@ import { prisma } from "@ai/db";
 import { fetchEmbeddingsBatch, vectorLiteralForSql } from "@/lib/embeddings-api";
 import { resolveTenantEmbeddingConfig } from "@/lib/tenant-embedding-config";
 
+/**
+ * Собирает человекочитаемую «хлебную крошку» раздела из Chunk.metadata, если она есть.
+ * Формат: "Раздел › Подраздел › Заголовок". Возвращает пустую строку, если данных нет.
+ */
+function breadcrumbsFromMetadata(raw: unknown): string {
+  if (!raw || typeof raw !== "object") return "";
+  const m = raw as { breadcrumbs?: unknown; heading?: unknown };
+  const list: string[] = [];
+  if (Array.isArray(m.breadcrumbs)) {
+    for (const b of m.breadcrumbs) {
+      if (typeof b === "string" && b.trim()) list.push(b.trim());
+    }
+  }
+  if (typeof m.heading === "string" && m.heading.trim()) {
+    list.push(m.heading.trim());
+  }
+  return list.join(" › ");
+}
+
+/** Префикс с «путём по заголовкам» к самому тексту чанка — для передачи модели. */
+function withBreadcrumbsPrefix(body: string, metadata: unknown): string {
+  const crumbs = breadcrumbsFromMetadata(metadata);
+  if (!crumbs) return body;
+  return `📍 ${crumbs}\n${body}`;
+}
+
 const DEFAULT_MAX = 12_000;
 
 /** Единый формат цитаты, сохраняемый в Message.metadata.citations */
@@ -26,6 +52,7 @@ type ChunkRow = {
   knowledgeItemId: string;
   sourceType: string | null;
   sourceUrl: string | null;
+  metadata?: unknown;
   rank?: number | null;
   dist?: number | null;
 };
@@ -159,7 +186,7 @@ export async function buildKnowledgeContextForBases(
   if (qFts.length >= 2) {
     try {
       ftsRows = await prisma.$queryRaw<ChunkRow[]>`
-        SELECT c.id, c.content, ki.title AS title,
+        SELECT c.id, c.content, c.metadata AS metadata, ki.title AS title,
           ki."knowledgeBaseId" AS "knowledgeBaseId",
           kb.name AS "knowledgeBaseName",
           ki.id AS "knowledgeItemId",
@@ -192,7 +219,7 @@ export async function buildKnowledgeContextForBases(
       const orc = Prisma.join(parts, " OR ");
       try {
         ilikeRows = await prisma.$queryRaw<ChunkRow[]>`
-          SELECT c.id, c.content, ki.title AS title,
+          SELECT c.id, c.content, c.metadata AS metadata, ki.title AS title,
             ki."knowledgeBaseId" AS "knowledgeBaseId",
             kb.name AS "knowledgeBaseName",
             ki.id AS "knowledgeItemId",
@@ -221,7 +248,7 @@ export async function buildKnowledgeContextForBases(
   let recencyRows: ChunkRow[] = [];
   try {
     recencyRows = await prisma.$queryRaw<ChunkRow[]>`
-      SELECT c.id, c.content, ki.title AS title,
+      SELECT c.id, c.content, c.metadata AS metadata, ki.title AS title,
         ki."knowledgeBaseId" AS "knowledgeBaseId",
         kb.name AS "knowledgeBaseName",
         ki.id AS "knowledgeItemId",
@@ -256,7 +283,7 @@ export async function buildKnowledgeContextForBases(
       if (v?.length) {
         const lit = vectorLiteralForSql(v);
         vectorRows = (await prisma.$queryRaw(Prisma.sql`
-          SELECT c.id, c.content, ki.title AS title,
+          SELECT c.id, c.content, c.metadata AS metadata, ki.title AS title,
             ki."knowledgeBaseId" AS "knowledgeBaseId",
             kb.name AS "knowledgeBaseName",
             ki.id AS "knowledgeItemId",
@@ -293,14 +320,14 @@ export async function buildKnowledgeContextForBases(
   const scored = new Map<string, ContextPart>();
   for (const entry of merged) {
     const row = entry.row;
-    const body = row.content?.trim();
-    if (!body) {
+    const raw = row.content?.trim();
+    if (!raw) {
       continue;
     }
     scored.set(entry.key, {
       key: entry.key,
       score: entry.rrfScore,
-      body,
+      body: withBreadcrumbsPrefix(raw, row.metadata),
       citation: {
         chunkId: row.id,
         knowledgeBaseId: row.knowledgeBaseId,
@@ -423,6 +450,8 @@ export type KnowledgeSearchHit = {
   knowledgeBaseName: string;
   knowledgeItemId: string;
   title: string;
+  /** Путь по заголовкам внутри документа, если чанкер его сохранил. */
+  section: string | null;
   snippet: string;
   sourceType: "FILE" | "TEXT" | "URL" | null;
   sourceUrl: string | null;
@@ -438,6 +467,7 @@ type SearchChunkRow = {
   knowledgeItemId: string;
   sourceType: string | null;
   sourceUrl: string | null;
+  metadata?: unknown;
   rank?: number | null;
   dist?: number | null;
 };
@@ -486,7 +516,7 @@ export async function searchKnowledgeForTool(
   if (qFts.length >= 2) {
     try {
       ftsRows = await prisma.$queryRaw<SearchChunkRow[]>`
-        SELECT c.id, c.content, ki.title AS title,
+        SELECT c.id, c.content, c.metadata AS metadata, ki.title AS title,
           ki."knowledgeBaseId" AS "knowledgeBaseId",
           kb.name AS "knowledgeBaseName",
           ki.id AS "knowledgeItemId",
@@ -519,7 +549,7 @@ export async function searchKnowledgeForTool(
       const orc = Prisma.join(parts, " OR ");
       try {
         ilikeRows = await prisma.$queryRaw<SearchChunkRow[]>`
-          SELECT c.id, c.content, ki.title AS title,
+          SELECT c.id, c.content, c.metadata AS metadata, ki.title AS title,
             ki."knowledgeBaseId" AS "knowledgeBaseId",
             kb.name AS "knowledgeBaseName",
             ki.id AS "knowledgeItemId",
@@ -557,7 +587,7 @@ export async function searchKnowledgeForTool(
       if (v?.length) {
         const lit = vectorLiteralForSql(v);
         vectorRows = (await prisma.$queryRaw(Prisma.sql`
-          SELECT c.id, c.content, ki.title AS title,
+          SELECT c.id, c.content, c.metadata AS metadata, ki.title AS title,
             ki."knowledgeBaseId" AS "knowledgeBaseId",
             kb.name AS "knowledgeBaseName",
             ki.id AS "knowledgeItemId",
@@ -588,17 +618,21 @@ export async function searchKnowledgeForTool(
   ]);
 
   const sorted = merged.slice(0, kSafe);
-  return sorted.map<KnowledgeSearchHit>(({ row, rrfScore }) => ({
-    chunkId: row.id,
-    knowledgeBaseId: row.knowledgeBaseId,
-    knowledgeBaseName: row.knowledgeBaseName ?? "",
-    knowledgeItemId: row.knowledgeItemId,
-    title: row.title,
-    snippet: toSnippet(row.content, terms),
-    sourceType: normalizeSourceType(row.sourceType),
-    sourceUrl: row.sourceUrl?.trim() || null,
-    // Нормализуем к диапазону 0..100 для удобства логов/UI. Чистый RRF-score
-    // даёт ~0.02–0.05 максимум, умножим на 1000 и округлим.
-    score: Number((rrfScore * 1000).toFixed(2)),
-  }));
+  return sorted.map<KnowledgeSearchHit>(({ row, rrfScore }) => {
+    const section = breadcrumbsFromMetadata(row.metadata) || null;
+    return {
+      chunkId: row.id,
+      knowledgeBaseId: row.knowledgeBaseId,
+      knowledgeBaseName: row.knowledgeBaseName ?? "",
+      knowledgeItemId: row.knowledgeItemId,
+      title: row.title,
+      section,
+      snippet: toSnippet(row.content, terms),
+      sourceType: normalizeSourceType(row.sourceType),
+      sourceUrl: row.sourceUrl?.trim() || null,
+      // Нормализуем к диапазону 0..100 для удобства логов/UI. Чистый RRF-score
+      // даёт ~0.02–0.05 максимум, умножим на 1000 и округлим.
+      score: Number((rrfScore * 1000).toFixed(2)),
+    };
+  });
 }

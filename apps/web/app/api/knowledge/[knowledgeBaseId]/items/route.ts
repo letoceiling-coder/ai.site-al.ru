@@ -3,7 +3,7 @@ import { prisma } from "@ai/db";
 import { fail, ok } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
 import {
-  chunkPlainText,
+  chunkTextStructured,
   createDocumentWithChunks,
   deriveTitleFromText,
   MAX_KNOWLEDGE_TEXT_CHARS,
@@ -91,7 +91,7 @@ export async function POST(request: Request, context: Ctx) {
   }
 
   if (st === "TEXT" && content.length > TEXT_CHUNK_THRESHOLD) {
-    const pieces = chunkPlainText(content, settings.chunkSize, settings.chunkOverlap);
+    const pieces = chunkTextStructured(content, settings.chunkSize, settings.chunkOverlap);
     if (pieces.length === 0) {
       return fail("Не удалось разбить текст на фрагменты", "VALIDATION_ERROR", 400);
     }

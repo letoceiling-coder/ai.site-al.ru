@@ -1,24 +1,11 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@ai/db";
-import { chunkPlainText, createDocumentWithChunks } from "@/lib/knowledge-ingest";
+import { chunkTextStructured, createDocumentWithChunks } from "@/lib/knowledge-ingest";
+import { htmlToStructuredMarkdown } from "@/lib/knowledge-chunker";
 import { resolveKnowledgeBaseSettings } from "@/lib/knowledge-settings";
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const FETCH_MS = 18_000;
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<\/(p|div|br|h1|h2|h3|h4|li|tr)>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 function isPrivateHostname(host: string): boolean {
   const h = host.toLowerCase();
@@ -146,8 +133,8 @@ export async function processQueuedUrlKnowledgeItem(input: {
     return { ok: false, message: fetched.error };
   }
 
-  const plain = stripHtml(fetched.html);
-  if (plain.length < 40) {
+  const plain = htmlToStructuredMarkdown(fetched.html);
+  if (plain.replace(/\s+/g, " ").trim().length < 40) {
     await prisma.knowledgeItem.update({
       where: { id: item.id },
       data: {
@@ -161,7 +148,7 @@ export async function processQueuedUrlKnowledgeItem(input: {
     return { ok: false, message: "Мало текста на странице" };
   }
 
-  const pieces = chunkPlainText(plain, settings.chunkSize, settings.chunkOverlap);
+  const pieces = chunkTextStructured(plain, settings.chunkSize, settings.chunkOverlap);
   if (pieces.length === 0) {
     await prisma.knowledgeItem.update({
       where: { id: item.id },

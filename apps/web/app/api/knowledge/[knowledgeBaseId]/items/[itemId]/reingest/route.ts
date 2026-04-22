@@ -3,7 +3,7 @@ import { prisma } from "@ai/db";
 import { fail, ok } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
 import {
-  chunkPlainText,
+  chunkTextStructured,
   createDocumentWithChunks,
 } from "@/lib/knowledge-ingest";
 import { processQueuedUrlKnowledgeItem } from "@/lib/url-ingest";
@@ -49,7 +49,7 @@ export async function POST(_: Request, context: Ctx) {
       return fail("В записи нет текста для переиндексации", "VALIDATION_ERROR", 400);
     }
     const settings = await resolveKnowledgeBaseSettings(auth.tenantId, knowledgeBaseId);
-    const pieces = chunkPlainText(content, settings.chunkSize, settings.chunkOverlap);
+    const pieces = chunkTextStructured(content, settings.chunkSize, settings.chunkOverlap);
     if (pieces.length === 0) {
       return fail("Не удалось разбить текст на фрагменты", "VALIDATION_ERROR", 400);
     }

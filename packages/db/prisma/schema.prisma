@@ -452,6 +452,8 @@ model Chunk {
   embeddingRef String?
   /// Вектор эмбеддинга (pgvector); обновляется воркером после ingest. Prisma не типизирует vector.
   embedding    Unsupported("vector(1536)")?
+  /// Структурные метаданные чанка: breadcrumbs (путь по заголовкам), heading, hints.
+  metadata     Json?
   createdAt    DateTime @default(now())
   document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
