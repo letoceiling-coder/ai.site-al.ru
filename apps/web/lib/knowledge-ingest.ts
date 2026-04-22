@@ -138,6 +138,49 @@ function normalizePiece(p: AnyPiece): ChunkPiece {
   return p;
 }
 
+/**
+ * Файлы, которые сознательно уводим в фоновый воркер (см. `knowledge-parse-worker.ts`).
+ * Парсинг PDF/DOCX и просто крупных файлов — CPU-heavy и блокирует Next.js event loop,
+ * поэтому в веб-ответе мы делаем только загрузку и ставим задачу в очередь.
+ */
+const HEAVY_FILE_SIZE_THRESHOLD = 1_000_000;
+
+export function isHeavyFile(mimeType: string, filename: string, size: number): boolean {
+  const mime = (mimeType || "").toLowerCase();
+  const lower = (filename || "").toLowerCase();
+  if (mime === "application/pdf" || lower.endsWith(".pdf")) return true;
+  if (
+    mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    lower.endsWith(".docx")
+  ) {
+    return true;
+  }
+  return size > HEAVY_FILE_SIZE_THRESHOLD;
+}
+
+/** Документ в статусе QUEUED без чанков — воркер парсинга обработает позже. */
+export async function createDocumentPending(
+  tx: Prisma.TransactionClient,
+  params: {
+    tenantId: string;
+    knowledgeItemId: string;
+    objectKey: string;
+    mimeType: string;
+    fileSize: number;
+  },
+) {
+  return tx.document.create({
+    data: {
+      tenantId: params.tenantId,
+      knowledgeItemId: params.knowledgeItemId,
+      objectKey: params.objectKey,
+      mimeType: params.mimeType,
+      fileSize: params.fileSize,
+      parsingStatus: "QUEUED",
+    },
+  });
+}
+
 /** Создаёт Document + Chunk + опционально EmbeddingJob (внутри переданной транзакции). */
 export async function createDocumentWithChunks(
   tx: Prisma.TransactionClient,
@@ -246,6 +289,52 @@ export async function ingestSourcesToKnowledgeBase(input: {
     const sha256 = createHash("sha256").update(buffer).digest("hex");
     await removeDuplicateFileIngest(input.tenantId, input.knowledgeBaseId, src.url, sha256);
 
+    const titleBase = src.name.replace(/\.[^.]+$/, "") || src.name;
+    const objectKey = rel.replace(/^public[\\/]/, "").replace(/\\/g, "/");
+    const heavy = isHeavyFile(src.mimeType, src.name, src.size);
+
+    // --- Тяжёлый файл: не парсим в веб-процессе, складываем в очередь ---
+    if (heavy) {
+      try {
+        await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          const item = await tx.knowledgeItem.create({
+            data: {
+              tenantId: input.tenantId,
+              knowledgeBaseId: input.knowledgeBaseId,
+              sourceType: "FILE",
+              title: titleBase.slice(0, 200),
+              content: null,
+              status: "QUEUED",
+              metadata: {
+                sourceUrl: src.url,
+                mimeType: src.mimeType,
+                size: src.size,
+                contentSha256: sha256,
+                originalFilename: src.name,
+                parseQueuedAt: new Date().toISOString(),
+                parseMode: "worker",
+                chunkSize: settings.chunkSize,
+                chunkOverlap: settings.chunkOverlap,
+              } as object,
+            },
+          });
+          await createDocumentPending(tx, {
+            tenantId: input.tenantId,
+            knowledgeItemId: item.id,
+            objectKey,
+            mimeType: src.mimeType || "application/octet-stream",
+            fileSize: src.size,
+          });
+        });
+        created += 1;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        errors.push(`${src.name}: не удалось поставить в очередь парсинга (${msg})`);
+      }
+      continue;
+    }
+
+    // --- Лёгкий файл: парсим синхронно (TXT/MD/JSON) ---
     const ingestT0 = Date.now();
     let parseNote: string | undefined;
     let text: string;
@@ -270,8 +359,6 @@ export async function ingestSourcesToKnowledgeBase(input: {
       continue;
     }
 
-    const titleBase = src.name.replace(/\.[^.]+$/, "") || src.name;
-    const objectKey = rel.replace(/^public[\\/]/, "").replace(/\\/g, "/");
     const ingestMs = Date.now() - ingestT0;
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -288,11 +375,13 @@ export async function ingestSourcesToKnowledgeBase(input: {
             mimeType: src.mimeType,
             size: src.size,
             contentSha256: sha256,
+            originalFilename: src.name,
             chunkCount: pieces.length,
             extractedCharCount: text.length,
             ingestMs,
             ingestNote: parseNote ?? null,
             parserError: null,
+            parseMode: "inline",
             chunkSize: settings.chunkSize,
             chunkOverlap: settings.chunkOverlap,
           } as object,
