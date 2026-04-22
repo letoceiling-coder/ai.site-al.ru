@@ -13,6 +13,6 @@ export async function POST(request: Request) {
     return fail("Forbidden", "FORBIDDEN", 403);
   }
 
-  await runEmbeddingJobsBatch(6);
-  return ok({ processed: true });
+  const result = await runEmbeddingJobsBatch(6);
+  return ok({ ok: true, ...result });
 }
