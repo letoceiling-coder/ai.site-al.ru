@@ -68,6 +68,65 @@ type ContextPart = {
   citation: Omit<KnowledgeCitation, "marker"> & { marker?: string };
 };
 
+/* ----------------------------- RRF -----------------------------------
+ * Reciprocal Rank Fusion: при наличии нескольких ранжированных списков
+ * (FTS, vector, recency, ILIKE, static) объединяем их устойчивым способом:
+ *
+ *   score(key) = Σ_lists  weight_l / (k + rank_l(key))
+ *
+ * Плюсы vs «взвешенная сумма скорингов»:
+ *  - не нужно нормализовать несопоставимые метрики (ts_rank vs cosine);
+ *  - добавление/удаление сигнала не ломает всю калибровку;
+ *  - хорошо работает на разреженных списках (когда нет вектора или FTS).
+ *
+ * k=60 — классический выбор по оригинальной статье (Cormack et al. 2009).
+ * ------------------------------------------------------------------- */
+const RRF_K = 60;
+
+type RankedList<TRow> = {
+  name: string;
+  weight: number;
+  rows: TRow[];
+  /** Получить стабильный ключ строки для слияния. */
+  keyOf: (row: TRow) => string;
+};
+
+type RrfMergeEntry<TRow> = {
+  key: string;
+  rrfScore: number;
+  /** Лучшая (самая ранняя в наиболее приоритетном списке) версия строки. */
+  row: TRow;
+  /** Для отладки/аудита: какие источники сколько дали. */
+  contributions: Array<{ name: string; rank: number; part: number }>;
+};
+
+function rrfMerge<TRow>(lists: RankedList<TRow>[]): RrfMergeEntry<TRow>[] {
+  const map = new Map<string, RrfMergeEntry<TRow>>();
+  for (const list of lists) {
+    list.rows.forEach((row, index) => {
+      const key = list.keyOf(row);
+      if (!key) {
+        return;
+      }
+      const rank = index + 1;
+      const part = list.weight / (RRF_K + rank);
+      const prev = map.get(key);
+      if (prev) {
+        prev.rrfScore += part;
+        prev.contributions.push({ name: list.name, rank, part });
+      } else {
+        map.set(key, {
+          key,
+          row,
+          rrfScore: part,
+          contributions: [{ name: list.name, rank, part }],
+        });
+      }
+    });
+  }
+  return Array.from(map.values()).sort((a, b) => b.rrfScore - a.rrfScore);
+}
+
 export type KnowledgeContextResult = {
   /** Текст, готовый для вставки в системный промпт. Пустая строка — ничего не нашли. */
   text: string;
@@ -123,7 +182,7 @@ export async function buildKnowledgeContextForBases(
   }
 
   let ilikeRows: ChunkRow[] = [];
-  if (ftsRows.length < 22 && terms.length > 0) {
+  if (terms.length > 0) {
     const parts = terms
       .map(sanitizeIlike)
       .filter(Boolean)
@@ -148,7 +207,7 @@ export async function buildKnowledgeContextForBases(
             AND ki."knowledgeBaseId" IN (${kbSql})
             AND (${orc})
           ORDER BY ki."updatedAt" DESC
-          LIMIT 50
+          LIMIT 40
         `;
       } catch {
         ilikeRows = [];
@@ -156,29 +215,30 @@ export async function buildKnowledgeContextForBases(
     }
   }
 
-  let recentRows: ChunkRow[] = [];
-  if (ftsRows.length + ilikeRows.length < 28) {
-    try {
-      recentRows = await prisma.$queryRaw<ChunkRow[]>`
-        SELECT c.id, c.content, ki.title AS title,
-          ki."knowledgeBaseId" AS "knowledgeBaseId",
-          kb.name AS "knowledgeBaseName",
-          ki.id AS "knowledgeItemId",
-          ki."sourceType"::text AS "sourceType",
-          ki."sourceUrl" AS "sourceUrl",
-          0::float AS rank
-        FROM "Chunk" c
-        INNER JOIN "Document" d ON d.id = c."documentId"
-        INNER JOIN "KnowledgeItem" ki ON ki.id = d."knowledgeItemId"
-        INNER JOIN "KnowledgeBase" kb ON kb.id = ki."knowledgeBaseId"
-        WHERE c."tenantId" = ${tenantId}
-          AND ki."knowledgeBaseId" IN (${kbSql})
-        ORDER BY ki."updatedAt" DESC, c.idx ASC
-        LIMIT 55
-      `;
-    } catch {
-      recentRows = [];
-    }
+  // Свежесть (recency): отдельный сигнал, независимо от совпадения по тексту.
+  // Даёт шанс только что добавленным материалам попасть в контекст, даже если
+  // FTS пока не построил по ним статистику.
+  let recencyRows: ChunkRow[] = [];
+  try {
+    recencyRows = await prisma.$queryRaw<ChunkRow[]>`
+      SELECT c.id, c.content, ki.title AS title,
+        ki."knowledgeBaseId" AS "knowledgeBaseId",
+        kb.name AS "knowledgeBaseName",
+        ki.id AS "knowledgeItemId",
+        ki."sourceType"::text AS "sourceType",
+        ki."sourceUrl" AS "sourceUrl",
+        0::float AS rank
+      FROM "Chunk" c
+      INNER JOIN "Document" d ON d.id = c."documentId"
+      INNER JOIN "KnowledgeItem" ki ON ki.id = d."knowledgeItemId"
+      INNER JOIN "KnowledgeBase" kb ON kb.id = ki."knowledgeBaseId"
+      WHERE c."tenantId" = ${tenantId}
+        AND ki."knowledgeBaseId" IN (${kbSql})
+      ORDER BY ki."updatedAt" DESC, c.idx ASC
+      LIMIT 30
+    `;
+  } catch {
+    recencyRows = [];
   }
 
   let vectorRows: ChunkRow[] = [];
@@ -219,21 +279,28 @@ export async function buildKnowledgeContextForBases(
     }
   }
 
+  // Построение объединённого рейтинга через RRF. Веса подобраны эмпирически:
+  // FTS и vector — главные сигналы релевантности; ILIKE — подстраховка для
+  // частичных совпадений/кириллических стеммов; recency — бонус свежести.
+  const chunkRowKey = (r: ChunkRow) => `chunk:${r.id}`;
+  const merged = rrfMerge<ChunkRow>([
+    { name: "fts", weight: 1.0, rows: ftsRows, keyOf: chunkRowKey },
+    { name: "vector", weight: 1.0, rows: vectorRows, keyOf: chunkRowKey },
+    { name: "ilike", weight: 0.6, rows: ilikeRows, keyOf: chunkRowKey },
+    { name: "recency", weight: 0.4, rows: recencyRows, keyOf: chunkRowKey },
+  ]);
+
   const scored = new Map<string, ContextPart>();
-  const push = (row: ChunkRow, score: number) => {
-    const t = row.content?.trim();
-    if (!t) {
-      return;
+  for (const entry of merged) {
+    const row = entry.row;
+    const body = row.content?.trim();
+    if (!body) {
+      continue;
     }
-    const key = `chunk:${row.id}`;
-    const prev = scored.get(key);
-    if (prev && prev.score >= score) {
-      return;
-    }
-    scored.set(key, {
-      key,
-      score,
-      body: t, // маркер припишем позже, когда будем знать финальный номер
+    scored.set(entry.key, {
+      key: entry.key,
+      score: entry.rrfScore,
+      body,
       citation: {
         chunkId: row.id,
         knowledgeBaseId: row.knowledgeBaseId,
@@ -244,21 +311,6 @@ export async function buildKnowledgeContextForBases(
         sourceUrl: row.sourceUrl?.trim() || null,
       },
     });
-  };
-
-  for (const r of ftsRows) {
-    push(r, 100 + (Number(r.rank) || 0) * 80);
-  }
-  for (const r of ilikeRows) {
-    push(r, 45 + keywordHits(r.content, terms) * 5);
-  }
-  for (const r of recentRows) {
-    push(r, 18 + keywordHits(r.content, terms) * 3);
-  }
-  for (const r of vectorRows) {
-    const dist = Number(r.dist);
-    const vPart = Number.isFinite(dist) ? 38 / (1 + dist * 12) : 12;
-    push(r, 28 + vPart);
   }
 
   const staticItems = await prisma.knowledgeItem
@@ -430,17 +482,6 @@ export async function searchKnowledgeForTool(
   const kbSql = kbInClause(knowledgeBaseIds);
   const qFts = terms.slice(0, 14).join(" ").slice(0, 400);
 
-  const scored = new Map<string, { row: SearchChunkRow; score: number }>();
-  const push = (row: SearchChunkRow, score: number) => {
-    if (!row?.content?.trim()) {
-      return;
-    }
-    const prev = scored.get(row.id);
-    if (!prev || score > prev.score) {
-      scored.set(row.id, { row, score });
-    }
-  };
-
   let ftsRows: SearchChunkRow[] = [];
   if (qFts.length >= 2) {
     try {
@@ -466,11 +507,9 @@ export async function searchKnowledgeForTool(
       ftsRows = [];
     }
   }
-  for (const r of ftsRows) {
-    push(r, 100 + (Number(r.rank) || 0) * 80);
-  }
 
-  if (scored.size < kSafe && terms.length > 0) {
+  let ilikeRows: SearchChunkRow[] = [];
+  if (terms.length > 0) {
     const parts = terms
       .map(sanitizeIlike)
       .filter(Boolean)
@@ -479,7 +518,7 @@ export async function searchKnowledgeForTool(
     if (parts.length > 0) {
       const orc = Prisma.join(parts, " OR ");
       try {
-        const ilikeRows = await prisma.$queryRaw<SearchChunkRow[]>`
+        ilikeRows = await prisma.$queryRaw<SearchChunkRow[]>`
           SELECT c.id, c.content, ki.title AS title,
             ki."knowledgeBaseId" AS "knowledgeBaseId",
             kb.name AS "knowledgeBaseName",
@@ -497,15 +536,13 @@ export async function searchKnowledgeForTool(
           ORDER BY ki."updatedAt" DESC
           LIMIT 40
         `;
-        for (const r of ilikeRows) {
-          push(r, 45 + keywordHits(r.content, terms) * 5);
-        }
       } catch {
-        /* ignore */
+        ilikeRows = [];
       }
     }
   }
 
+  let vectorRows: SearchChunkRow[] = [];
   const embCfg = await resolveTenantEmbeddingConfig(tenantId);
   const qTrim = userQuery.trim();
   if (embCfg && qTrim.length > 2) {
@@ -519,7 +556,7 @@ export async function searchKnowledgeForTool(
       const v = vectors[0];
       if (v?.length) {
         const lit = vectorLiteralForSql(v);
-        const vectorRows = (await prisma.$queryRaw(Prisma.sql`
+        vectorRows = (await prisma.$queryRaw(Prisma.sql`
           SELECT c.id, c.content, ki.title AS title,
             ki."knowledgeBaseId" AS "knowledgeBaseId",
             kb.name AS "knowledgeBaseName",
@@ -537,19 +574,21 @@ export async function searchKnowledgeForTool(
           ORDER BY dist ASC
           LIMIT 24
         `)) as SearchChunkRow[];
-        for (const r of vectorRows) {
-          const dist = Number(r.dist);
-          const vPart = Number.isFinite(dist) ? 38 / (1 + dist * 12) : 12;
-          push(r, 28 + vPart);
-        }
       }
     } catch {
-      /* ignore */
+      vectorRows = [];
     }
   }
 
-  const sorted = [...scored.values()].sort((a, b) => b.score - a.score).slice(0, kSafe);
-  return sorted.map<KnowledgeSearchHit>(({ row, score }) => ({
+  const searchKey = (r: SearchChunkRow) => (r?.content?.trim() ? r.id : "");
+  const merged = rrfMerge<SearchChunkRow>([
+    { name: "fts", weight: 1.0, rows: ftsRows, keyOf: searchKey },
+    { name: "vector", weight: 1.0, rows: vectorRows, keyOf: searchKey },
+    { name: "ilike", weight: 0.6, rows: ilikeRows, keyOf: searchKey },
+  ]);
+
+  const sorted = merged.slice(0, kSafe);
+  return sorted.map<KnowledgeSearchHit>(({ row, rrfScore }) => ({
     chunkId: row.id,
     knowledgeBaseId: row.knowledgeBaseId,
     knowledgeBaseName: row.knowledgeBaseName ?? "",
@@ -558,6 +597,8 @@ export async function searchKnowledgeForTool(
     snippet: toSnippet(row.content, terms),
     sourceType: normalizeSourceType(row.sourceType),
     sourceUrl: row.sourceUrl?.trim() || null,
-    score: Number(score.toFixed(2)),
+    // Нормализуем к диапазону 0..100 для удобства логов/UI. Чистый RRF-score
+    // даёт ~0.02–0.05 максимум, умножим на 1000 и округлим.
+    score: Number((rrfScore * 1000).toFixed(2)),
   }));
 }
