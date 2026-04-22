@@ -616,10 +616,16 @@ export function AssistantsPageClient() {
           <h1 style={{ marginBottom: 4 }}>Ассистенты</h1>
           <p style={{ marginTop: 0, marginBottom: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.45 }}>
             Системный промпт, тестовый чат, базы знаний. Укажите агента — или интеграцию и модель
-            (как в разделе «Агенты»).
+            (как в разделе «Агенты»).{" "}
+            <Link href="/docs/assistants" className="assistants-help-link">
+              ? Справка: как настроить
+            </Link>
           </p>
         </div>
         <div className="crm-tabs">
+          <Link href="/docs/assistants" className="button-ghost" title="Полная справка по настройке">
+            ? Справка
+          </Link>
           <button
             type="button"
             className={viewTab === "manage" ? "crm-tab-active" : "button-ghost"}

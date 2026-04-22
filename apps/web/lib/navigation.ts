@@ -5,6 +5,7 @@ export const adminMenu = [
   { href: "/knowledge", title: "База знаний", icon: "⌘" },
   { href: "/docs/knowledge", title: "Справка: база знаний", icon: "?" },
   { href: "/assistants", title: "Ассистенты", icon: "◈" },
+  { href: "/docs/assistants", title: "Справка: ассистенты", icon: "?" },
   { href: "/operator", title: "Оператор", icon: "✋" },
   { href: "/dialogs", title: "Диалоги", icon: "◌" },
   { href: "/api-keys", title: "API ключи", icon: "◍" },

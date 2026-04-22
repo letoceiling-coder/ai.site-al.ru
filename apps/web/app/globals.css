@@ -1342,8 +1342,56 @@ button:disabled {
 
 .assistants-routing {
   border-top: 1px solid var(--line);
-  margin-top: 8px;
-  padding-top: 8px;
+  margin-top: 20px;
+  padding-top: 16px;
+}
+
+/* отступы между основными блоками формы ассистента */
+.agent-form--compact > label,
+.agent-form--compact > .assistant-persona-head {
+  margin-top: 14px;
+}
+
+.agent-form--compact > label:first-of-type {
+  margin-top: 4px;
+}
+
+.assistants-help-link {
+  display: inline-block;
+  margin-left: 6px;
+  color: #4f46e5;
+  text-decoration: none;
+  border-bottom: 1px dashed #a5b4fc;
+  font-weight: 500;
+  padding-bottom: 1px;
+}
+
+.assistants-help-link:hover {
+  color: #3730a3;
+  border-color: #4f46e5;
+}
+
+/* ссылка-кнопка внутри .crm-tabs ("? Справка") */
+.crm-tabs a.button-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  border: 1px solid #d4d4d8;
+  background: #fff;
+  color: #27272a;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.crm-tabs a.button-ghost:hover {
+  background: #f4f4f5;
+  border-color: #a1a1aa;
+  color: #18181b;
+  transform: none;
 }
 
 .assistants-routing .assistants-hint {
@@ -1409,11 +1457,22 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin: 12px 0 6px;
-  padding: 8px 10px;
+  margin: 18px 0 10px;
+  padding: 10px 12px;
   background: #f9fafb;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.assistant-persona-head:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+/* первый collapse-блок в форме без лишнего отступа сверху */
+.agent-form > .assistant-persona-head:first-of-type {
+  margin-top: 14px;
 }
 
 .assistant-persona-toggle {
@@ -1424,6 +1483,17 @@ button:disabled {
   color: #111827;
   cursor: pointer;
   padding: 0;
+}
+
+.assistant-persona-toggle:hover,
+.assistant-persona-toggle:focus,
+.assistant-persona-toggle:active,
+.assistant-persona-toggle:focus-visible {
+  background: transparent !important;
+  color: #4f46e5;
+  transform: none;
+  box-shadow: none;
+  outline: none;
 }
 
 .assistant-persona-summary {
@@ -1510,19 +1580,31 @@ button:disabled {
 .assistant-tools-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  margin-bottom: 6px;
+  gap: 10px;
+  padding: 12px;
+  margin: 0 0 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: #fff;
 }
 
 .assistant-tool-card {
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  padding: 12px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
   background: #fafbff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.assistant-tool-card:hover {
+  border-color: #c7d2fe;
+  background: #f6f7ff;
+}
+
+.assistant-tool-card:has(input[type="checkbox"]:checked) {
+  border-color: #a5b4fc;
+  background: #eef2ff;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.08);
 }
 
 .assistant-tool-enable {
