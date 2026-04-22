@@ -245,3 +245,212 @@ export async function buildKnowledgeContextForBases(
   }
   return out;
 }
+
+/* ---------------------------------------------------------------------
+ * Структурированный поиск (для tool `search_knowledge_base`).
+ * Возвращает список цитат с метаданными (kbId, itemId, title, sourceUrl).
+ * ------------------------------------------------------------------- */
+
+export type KnowledgeSearchHit = {
+  chunkId: string;
+  knowledgeBaseId: string;
+  knowledgeBaseName: string;
+  knowledgeItemId: string;
+  title: string;
+  snippet: string;
+  sourceType: "FILE" | "TEXT" | "URL" | null;
+  sourceUrl: string | null;
+  score: number;
+};
+
+type SearchChunkRow = {
+  id: string;
+  content: string;
+  title: string;
+  knowledgeBaseId: string;
+  knowledgeBaseName: string | null;
+  knowledgeItemId: string;
+  sourceType: string | null;
+  sourceUrl: string | null;
+  rank?: number | null;
+  dist?: number | null;
+};
+
+const SNIPPET_MAX_CHARS = 900;
+
+function toSnippet(content: string, terms: string[]): string {
+  const t = content.trim();
+  if (!t) {
+    return "";
+  }
+  if (t.length <= SNIPPET_MAX_CHARS) {
+    return t;
+  }
+  if (terms.length > 0) {
+    const low = t.toLowerCase();
+    for (const term of terms) {
+      const idx = low.indexOf(term.toLowerCase());
+      if (idx >= 0) {
+        const start = Math.max(0, idx - 120);
+        const end = Math.min(t.length, start + SNIPPET_MAX_CHARS);
+        const prefix = start > 0 ? "…" : "";
+        const suffix = end < t.length ? "…" : "";
+        return `${prefix}${t.slice(start, end)}${suffix}`;
+      }
+    }
+  }
+  return `${t.slice(0, SNIPPET_MAX_CHARS)}…`;
+}
+
+function normalizeSourceType(raw: string | null | undefined): "FILE" | "TEXT" | "URL" | null {
+  if (raw === "FILE" || raw === "TEXT" || raw === "URL") {
+    return raw;
+  }
+  return null;
+}
+
+export async function searchKnowledgeForTool(
+  tenantId: string,
+  knowledgeBaseIds: string[],
+  userQuery: string,
+  topK: number = 5,
+): Promise<KnowledgeSearchHit[]> {
+  if (knowledgeBaseIds.length === 0) {
+    return [];
+  }
+  const kSafe = Math.max(1, Math.min(10, Math.floor(topK || 5)));
+  const terms = extractTerms(userQuery);
+  const kbSql = kbInClause(knowledgeBaseIds);
+  const qFts = terms.slice(0, 14).join(" ").slice(0, 400);
+
+  const scored = new Map<string, { row: SearchChunkRow; score: number }>();
+  const push = (row: SearchChunkRow, score: number) => {
+    if (!row?.content?.trim()) {
+      return;
+    }
+    const prev = scored.get(row.id);
+    if (!prev || score > prev.score) {
+      scored.set(row.id, { row, score });
+    }
+  };
+
+  let ftsRows: SearchChunkRow[] = [];
+  if (qFts.length >= 2) {
+    try {
+      ftsRows = await prisma.$queryRaw<SearchChunkRow[]>`
+        SELECT c.id, c.content, ki.title AS title,
+          ki."knowledgeBaseId" AS "knowledgeBaseId",
+          kb.name AS "knowledgeBaseName",
+          ki.id AS "knowledgeItemId",
+          ki."sourceType"::text AS "sourceType",
+          ki."sourceUrl" AS "sourceUrl",
+          ts_rank_cd(c.content_tsv, plainto_tsquery('simple', ${qFts})) AS rank
+        FROM "Chunk" c
+        INNER JOIN "Document" d ON d.id = c."documentId"
+        INNER JOIN "KnowledgeItem" ki ON ki.id = d."knowledgeItemId"
+        INNER JOIN "KnowledgeBase" kb ON kb.id = ki."knowledgeBaseId"
+        WHERE c."tenantId" = ${tenantId}
+          AND ki."knowledgeBaseId" IN (${kbSql})
+          AND c.content_tsv @@ plainto_tsquery('simple', ${qFts})
+        ORDER BY rank DESC
+        LIMIT 40
+      `;
+    } catch {
+      ftsRows = [];
+    }
+  }
+  for (const r of ftsRows) {
+    push(r, 100 + (Number(r.rank) || 0) * 80);
+  }
+
+  if (scored.size < kSafe && terms.length > 0) {
+    const parts = terms
+      .map(sanitizeIlike)
+      .filter(Boolean)
+      .slice(0, 8)
+      .map((t) => Prisma.sql`c.content ILIKE ${`%${t}%`}`);
+    if (parts.length > 0) {
+      const orc = Prisma.join(parts, " OR ");
+      try {
+        const ilikeRows = await prisma.$queryRaw<SearchChunkRow[]>`
+          SELECT c.id, c.content, ki.title AS title,
+            ki."knowledgeBaseId" AS "knowledgeBaseId",
+            kb.name AS "knowledgeBaseName",
+            ki.id AS "knowledgeItemId",
+            ki."sourceType"::text AS "sourceType",
+            ki."sourceUrl" AS "sourceUrl",
+            0::float AS rank
+          FROM "Chunk" c
+          INNER JOIN "Document" d ON d.id = c."documentId"
+          INNER JOIN "KnowledgeItem" ki ON ki.id = d."knowledgeItemId"
+          INNER JOIN "KnowledgeBase" kb ON kb.id = ki."knowledgeBaseId"
+          WHERE c."tenantId" = ${tenantId}
+            AND ki."knowledgeBaseId" IN (${kbSql})
+            AND (${orc})
+          ORDER BY ki."updatedAt" DESC
+          LIMIT 40
+        `;
+        for (const r of ilikeRows) {
+          push(r, 45 + keywordHits(r.content, terms) * 5);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  const embCfg = await resolveTenantEmbeddingConfig(tenantId);
+  const qTrim = userQuery.trim();
+  if (embCfg && qTrim.length > 2) {
+    try {
+      const { vectors } = await fetchEmbeddingsBatch({
+        baseUrl: embCfg.baseUrl,
+        apiKey: embCfg.apiKey,
+        model: embCfg.model,
+        inputs: [qTrim.slice(0, 2000)],
+      });
+      const v = vectors[0];
+      if (v?.length) {
+        const lit = vectorLiteralForSql(v);
+        const vectorRows = (await prisma.$queryRaw(Prisma.sql`
+          SELECT c.id, c.content, ki.title AS title,
+            ki."knowledgeBaseId" AS "knowledgeBaseId",
+            kb.name AS "knowledgeBaseName",
+            ki.id AS "knowledgeItemId",
+            ki."sourceType"::text AS "sourceType",
+            ki."sourceUrl" AS "sourceUrl",
+            (c.embedding <=> ${Prisma.raw(`${lit}::vector`)}) AS dist
+          FROM "Chunk" c
+          INNER JOIN "Document" d ON d.id = c."documentId"
+          INNER JOIN "KnowledgeItem" ki ON ki.id = d."knowledgeItemId"
+          INNER JOIN "KnowledgeBase" kb ON kb.id = ki."knowledgeBaseId"
+          WHERE c."tenantId" = ${tenantId}
+            AND ki."knowledgeBaseId" IN (${kbSql})
+            AND c.embedding IS NOT NULL
+          ORDER BY dist ASC
+          LIMIT 24
+        `)) as SearchChunkRow[];
+        for (const r of vectorRows) {
+          const dist = Number(r.dist);
+          const vPart = Number.isFinite(dist) ? 38 / (1 + dist * 12) : 12;
+          push(r, 28 + vPart);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const sorted = [...scored.values()].sort((a, b) => b.score - a.score).slice(0, kSafe);
+  return sorted.map<KnowledgeSearchHit>(({ row, score }) => ({
+    chunkId: row.id,
+    knowledgeBaseId: row.knowledgeBaseId,
+    knowledgeBaseName: row.knowledgeBaseName ?? "",
+    knowledgeItemId: row.knowledgeItemId,
+    title: row.title,
+    snippet: toSnippet(row.content, terms),
+    sourceType: normalizeSourceType(row.sourceType),
+    sourceUrl: row.sourceUrl?.trim() || null,
+    score: Number(score.toFixed(2)),
+  }));
+}

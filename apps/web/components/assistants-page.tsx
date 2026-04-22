@@ -83,6 +83,7 @@ const emptyDraft = {
     create_lead: { ...DEFAULT_ASSISTANT_TOOLS.create_lead },
     handoff_to_operator: { ...DEFAULT_ASSISTANT_TOOLS.handoff_to_operator },
     schedule_callback: { ...DEFAULT_ASSISTANT_TOOLS.schedule_callback },
+    search_knowledge_base: { ...DEFAULT_ASSISTANT_TOOLS.search_knowledge_base },
   } as AssistantToolsConfig,
 };
 
@@ -257,6 +258,10 @@ export function AssistantsPageClient() {
           ...(item.tools?.handoff_to_operator ?? {}),
         },
         schedule_callback: { ...DEFAULT_ASSISTANT_TOOLS.schedule_callback, ...(item.tools?.schedule_callback ?? {}) },
+        search_knowledge_base: {
+          ...DEFAULT_ASSISTANT_TOOLS.search_knowledge_base,
+          ...(item.tools?.search_knowledge_base ?? {}),
+        },
       };
       setDraft({
         name: item.name,
@@ -272,11 +277,10 @@ export function AssistantsPageClient() {
         tools: toolsFromItem,
       });
       setPersonaOpen(true);
-      if (
-        toolsFromItem.create_lead.enabled ||
-        toolsFromItem.handoff_to_operator.enabled ||
-        toolsFromItem.schedule_callback.enabled
-      ) {
+      const anyToolEnabled = (Object.values(toolsFromItem) as { enabled?: boolean }[]).some(
+        (t) => t?.enabled === true,
+      );
+      if (anyToolEnabled) {
         setToolsOpen(true);
       }
       setHistoryOpen(false);
@@ -324,6 +328,7 @@ export function AssistantsPageClient() {
         create_lead: { ...DEFAULT_ASSISTANT_TOOLS.create_lead },
         handoff_to_operator: { ...DEFAULT_ASSISTANT_TOOLS.handoff_to_operator },
         schedule_callback: { ...DEFAULT_ASSISTANT_TOOLS.schedule_callback },
+        search_knowledge_base: { ...DEFAULT_ASSISTANT_TOOLS.search_knowledge_base },
       },
     });
   }
@@ -1084,24 +1089,28 @@ export function AssistantsPageClient() {
                           </p>
                           {cfg.enabled ? (
                             <div className="assistant-tool-fields">
-                              <label>
-                                Webhook URL (необязательно)
-                                <input
-                                  type="url"
-                                  value={cfg.webhookUrl}
-                                  placeholder="https://your-crm.example.com/hook"
-                                  onChange={(e) => updateTool(tool.id, { webhookUrl: e.target.value })}
-                                />
-                              </label>
-                              <label>
-                                Email для уведомлений (необязательно)
-                                <input
-                                  type="email"
-                                  value={cfg.notifyEmail}
-                                  placeholder="sales@example.com"
-                                  onChange={(e) => updateTool(tool.id, { notifyEmail: e.target.value })}
-                                />
-                              </label>
+                              {tool.id !== "search_knowledge_base" ? (
+                                <>
+                                  <label>
+                                    Webhook URL (необязательно)
+                                    <input
+                                      type="url"
+                                      value={cfg.webhookUrl}
+                                      placeholder="https://your-crm.example.com/hook"
+                                      onChange={(e) => updateTool(tool.id, { webhookUrl: e.target.value })}
+                                    />
+                                  </label>
+                                  <label>
+                                    Email для уведомлений (необязательно)
+                                    <input
+                                      type="email"
+                                      value={cfg.notifyEmail}
+                                      placeholder="sales@example.com"
+                                      onChange={(e) => updateTool(tool.id, { notifyEmail: e.target.value })}
+                                    />
+                                  </label>
+                                </>
+                              ) : null}
                               <label className="assistant-persona-role">
                                 Инструкция для ассистента (когда вызывать)
                                 <textarea
@@ -1109,7 +1118,11 @@ export function AssistantsPageClient() {
                                   value={cfg.instructions}
                                   maxLength={600}
                                   onChange={(e) => updateTool(tool.id, { instructions: e.target.value })}
-                                  placeholder="Например: вызывай только если пользователь явно просит перезвонить и назвал телефон."
+                                  placeholder={
+                                    tool.id === "search_knowledge_base"
+                                      ? "Например: перед ответом всегда ищи в базе знаний, если вопрос не из системного промпта."
+                                      : "Например: вызывай только если пользователь явно просит перезвонить и назвал телефон."
+                                  }
                                 />
                               </label>
                             </div>

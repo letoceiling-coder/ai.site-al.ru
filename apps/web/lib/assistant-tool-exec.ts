@@ -1,5 +1,6 @@
 import { prisma } from "@ai/db";
 import { BUILTIN_TOOLS, type AssistantToolId, type AssistantToolConfig } from "@/lib/assistant-tools";
+import { searchKnowledgeForTool } from "@/lib/knowledge-context";
 
 export type ToolEvent = {
   toolName: AssistantToolId;
@@ -15,6 +16,8 @@ export type ToolExecContext = {
   assistantId: string;
   assistantName: string;
   dialogId?: string;
+  /** Подключённые к ассистенту базы знаний (для search_knowledge_base). */
+  knowledgeBaseIds?: string[];
 };
 
 function stringOrEmpty(v: unknown): string {
@@ -299,6 +302,105 @@ async function execScheduleCallback(
   };
 }
 
+/** search_knowledge_base: контролируемый RAG — ассистент сам выбирает, когда поискать. */
+async function execSearchKnowledgeBase(
+  args: Record<string, unknown>,
+  _config: AssistantToolConfig,
+  ctx: ToolExecContext,
+): Promise<ToolEvent> {
+  const query = stringOrEmpty(args.query).slice(0, 500);
+  const rawTopK = typeof args.topK === "number" ? args.topK : Number(args.topK);
+  const topK = Number.isFinite(rawTopK) ? Math.max(1, Math.min(10, Math.floor(rawTopK))) : 5;
+
+  if (!query) {
+    return {
+      toolName: "search_knowledge_base",
+      inputJson: args,
+      outputJson: { ok: false, error: "query_required" },
+      resultText: "Пустой поисковый запрос. Сформулируй короткий запрос и попробуй снова.",
+      status: "FAILED",
+    };
+  }
+
+  const kbIds = Array.isArray(ctx.knowledgeBaseIds) ? ctx.knowledgeBaseIds.filter(Boolean) : [];
+  if (kbIds.length === 0) {
+    return {
+      toolName: "search_knowledge_base",
+      inputJson: args,
+      outputJson: { ok: false, error: "no_knowledge_bases" },
+      resultText:
+        "К ассистенту не подключена ни одна база знаний. Ответь пользователю по общим знаниям или " +
+        "попроси администратора подключить базу знаний.",
+      status: "FAILED",
+    };
+  }
+
+  let hits = [] as Awaited<ReturnType<typeof searchKnowledgeForTool>>;
+  try {
+    hits = await searchKnowledgeForTool(ctx.tenantId, kbIds, query, topK);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "search_failed";
+    return {
+      toolName: "search_knowledge_base",
+      inputJson: args,
+      outputJson: { ok: false, error: "search_failed", detail: msg.slice(0, 300) },
+      resultText: "Не удалось выполнить поиск по базе знаний. Продолжай отвечать по уже известному контексту.",
+      status: "FAILED",
+    };
+  }
+
+  if (hits.length === 0) {
+    return {
+      toolName: "search_knowledge_base",
+      inputJson: args,
+      outputJson: { ok: true, query, topK, hits: [] },
+      resultText:
+        `По запросу «${query}» ничего не найдено в подключённых базах знаний. ` +
+        "Сообщи пользователю, что данных нет, и при необходимости задай уточняющий вопрос.",
+      status: "COMPLETED",
+    };
+  }
+
+  const lines = hits.map((h, i) => {
+    const srcParts: string[] = [];
+    if (h.knowledgeBaseName) {
+      srcParts.push(`база «${h.knowledgeBaseName}»`);
+    }
+    if (h.sourceType === "URL" && h.sourceUrl) {
+      srcParts.push(h.sourceUrl);
+    } else if (h.sourceType) {
+      srcParts.push(h.sourceType.toLowerCase());
+    }
+    const source = srcParts.length > 0 ? ` (${srcParts.join(" · ")})` : "";
+    return `[#${i + 1}] ${h.title}${source}\n${h.snippet}`;
+  });
+  const resultText =
+    `Найдено фрагментов: ${hits.length}. Используй их как источник фактов и ссылайся на заголовки в ответе.\n\n` +
+    lines.join("\n\n");
+
+  return {
+    toolName: "search_knowledge_base",
+    inputJson: { query, topK },
+    outputJson: {
+      ok: true,
+      query,
+      topK,
+      hits: hits.map((h) => ({
+        title: h.title,
+        knowledgeBaseId: h.knowledgeBaseId,
+        knowledgeBaseName: h.knowledgeBaseName,
+        knowledgeItemId: h.knowledgeItemId,
+        sourceType: h.sourceType,
+        sourceUrl: h.sourceUrl,
+        score: h.score,
+        snippet: h.snippet,
+      })),
+    },
+    resultText,
+    status: "COMPLETED",
+  };
+}
+
 export async function executeAssistantTool(
   name: string,
   args: Record<string, unknown>,
@@ -331,6 +433,8 @@ export async function executeAssistantTool(
       return execHandoff(args, config, ctx);
     case "schedule_callback":
       return execScheduleCallback(args, config, ctx);
+    case "search_knowledge_base":
+      return execSearchKnowledgeBase(args, config, ctx);
     default:
       return {
         toolName: name as AssistantToolId,

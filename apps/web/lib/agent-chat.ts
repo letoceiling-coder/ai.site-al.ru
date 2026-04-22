@@ -718,6 +718,7 @@ export async function buildAssistantReply(input: {
           tenantId: input.tenantId,
           assistantId: assistant.id,
           assistantName: assistant.name,
+          knowledgeBaseIds: kbIds,
         },
       }
     : undefined;
@@ -881,6 +882,7 @@ export async function buildAssistantReplyForUserAssistant(input: {
           tenantId: input.tenantId,
           assistantId: assistant.id,
           assistantName: assistant.name,
+          knowledgeBaseIds: kbIds,
         },
       }
     : undefined;

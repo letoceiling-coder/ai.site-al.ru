@@ -12,7 +12,11 @@
  * Провайдеро-специфичная сериализация — в `toOpenAiTools`, `toAnthropicTools`, `toGeminiTools`.
  */
 
-export type AssistantToolId = "create_lead" | "handoff_to_operator" | "schedule_callback";
+export type AssistantToolId =
+  | "create_lead"
+  | "handoff_to_operator"
+  | "schedule_callback"
+  | "search_knowledge_base";
 
 export type AssistantToolConfig = {
   enabled: boolean;
@@ -40,6 +44,7 @@ export const DEFAULT_ASSISTANT_TOOLS: AssistantToolsConfig = {
   create_lead: { ...DEFAULT_TOOL_CONFIG },
   handoff_to_operator: { ...DEFAULT_TOOL_CONFIG },
   schedule_callback: { ...DEFAULT_TOOL_CONFIG },
+  search_knowledge_base: { ...DEFAULT_TOOL_CONFIG },
 };
 
 export type ToolParameterSchema = {
@@ -47,9 +52,12 @@ export type ToolParameterSchema = {
   properties: Record<
     string,
     {
-      type: "string" | "number" | "boolean";
+      type: "string" | "number" | "integer" | "boolean";
       description?: string;
       enum?: string[];
+      minimum?: number;
+      maximum?: number;
+      default?: unknown;
     }
   >;
   required?: string[];
@@ -113,6 +121,35 @@ export const BUILTIN_TOOLS: AssistantToolDefinition[] = [
     },
   },
   {
+    id: "search_knowledge_base",
+    title: "Поиск в базе знаний",
+    humanDescription:
+      "Ассистент сам ищет нужные фрагменты в подключённых базах знаний и цитирует их. Используется, когда контекста недостаточно или нужен уточняющий поиск по длинным материалам.",
+    modelDescription:
+      "Выполнить поиск по базе знаний ассистента и получить релевантные фрагменты с указанием источника. " +
+      "Вызывай, когда: (а) базового контекста недостаточно, (б) пользователь задаёт уточняющий/узкий вопрос, " +
+      "(в) нужно процитировать конкретный документ. Формулируй короткий, конкретный `query` (3–10 слов). " +
+      "Используй результаты как единственный источник фактов, если включён strict-режим. Цитируй `title` в ответе.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Короткий поисковый запрос на языке материалов базы (чаще русский). 3–10 значимых слов; без лишних фраз типа «найди в базе».",
+        },
+        topK: {
+          type: "integer",
+          description: "Сколько фрагментов вернуть (1–10). По умолчанию 5.",
+          minimum: 1,
+          maximum: 10,
+          default: 5,
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
     id: "schedule_callback",
     title: "Запрос обратного звонка",
     humanDescription:
@@ -162,6 +199,7 @@ export function normalizeAssistantTools(raw: unknown): AssistantToolsConfig {
     create_lead: normalizeOneTool(source.create_lead),
     handoff_to_operator: normalizeOneTool(source.handoff_to_operator),
     schedule_callback: normalizeOneTool(source.schedule_callback),
+    search_knowledge_base: normalizeOneTool(source.search_knowledge_base),
   };
 }
 
@@ -186,6 +224,7 @@ export function mergeAssistantTools(
     create_lead: { ...current.create_lead, ...(incoming.create_lead ?? {}) },
     handoff_to_operator: { ...current.handoff_to_operator, ...(incoming.handoff_to_operator ?? {}) },
     schedule_callback: { ...current.schedule_callback, ...(incoming.schedule_callback ?? {}) },
+    search_knowledge_base: { ...current.search_knowledge_base, ...(incoming.search_knowledge_base ?? {}) },
   };
   base.tools = normalizeAssistantTools(merged);
   return base;
