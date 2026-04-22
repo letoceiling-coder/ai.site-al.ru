@@ -110,28 +110,6 @@ export async function POST(request: Request, context: Context) {
   }
 
   const activeAssistantId = resolveActiveAssistantId(dialog.metadata, assistantRow.id);
-  const reply = await buildAssistantReplyForUserAssistant({
-    tenantId: auth.tenantId,
-    assistantId: activeAssistantId,
-    userText: text,
-    attachments,
-    dialogId,
-  }).catch((e) => {
-    throw e instanceof Error ? e : new Error("Reply failed");
-  });
-
-  await prisma.message.create({
-    data: {
-      tenantId: auth.tenantId,
-      dialogId,
-      userId: auth.userId,
-      role: "USER",
-      content: buildMessageContent(text, attachments),
-      tokenCount: reply.inputTokens,
-      provider: reply.providerForUsage as never,
-      model: reply.modelForUsage,
-    },
-  });
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -139,7 +117,35 @@ export async function POST(request: Request, context: Context) {
       const send = (payload: Record<string, unknown>) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
       };
+      let reply: Awaited<ReturnType<typeof buildAssistantReplyForUserAssistant>> | null = null;
       try {
+        reply = await buildAssistantReplyForUserAssistant({
+          tenantId: auth.tenantId,
+          assistantId: activeAssistantId,
+          userText: text,
+          attachments,
+          dialogId,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Reply failed";
+        console.error("[assistant-stream] buildAssistantReply failed:", message);
+        send({ type: "error", message });
+        controller.close();
+        return;
+      }
+      try {
+        await prisma.message.create({
+          data: {
+            tenantId: auth.tenantId,
+            dialogId,
+            userId: auth.userId,
+            role: "USER",
+            content: buildMessageContent(text, attachments),
+            tokenCount: reply.inputTokens,
+            provider: reply.providerForUsage as never,
+            model: reply.modelForUsage,
+          },
+        });
         send({ type: "meta", dialogId, routeMode: reply.routeMode });
         const chunks = tokenize(reply.responseText);
         let full = "";

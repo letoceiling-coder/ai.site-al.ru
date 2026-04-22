@@ -202,7 +202,11 @@ async function runOpenAiLikeLoop(
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
-      throw new Error(`${errLabel} error: ${response.status}`);
+      const errText = await response.text().catch(() => "");
+      const snippet = errText ? ` ${errText.slice(0, 500)}` : "";
+      throw new Error(
+        `${errLabel} ${response.status} (model "${model}"):${snippet || " no response body"}`,
+      );
     }
     const json = (await response.json()) as {
       choices?: Array<{
@@ -394,7 +398,11 @@ async function completeWithAnthropic(
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
-      throw new Error(`Anthropic error: ${response.status}`);
+      const errText = await response.text().catch(() => "");
+      const snippet = errText ? ` ${errText.slice(0, 500)}` : "";
+      throw new Error(
+        `Anthropic ${response.status} (model "${model}"):${snippet || " no response body"}`,
+      );
     }
     const json = (await response.json()) as {
       content?: Array<
@@ -528,7 +536,11 @@ async function completeWithGemini(
       },
     );
     if (!response.ok) {
-      throw new Error(`Gemini error: ${response.status}`);
+      const errText = await response.text().catch(() => "");
+      const snippet = errText ? ` ${errText.slice(0, 500)}` : "";
+      throw new Error(
+        `Gemini ${response.status} (model "${model}"):${snippet || " no response body"}`,
+      );
     }
     const json = (await response.json()) as {
       candidates?: Array<{

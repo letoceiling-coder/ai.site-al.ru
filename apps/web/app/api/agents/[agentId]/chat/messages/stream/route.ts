@@ -106,68 +106,72 @@ export async function POST(request: Request, context: Context) {
     }
   }
 
-  const reply = await buildAssistantReply({
-    tenantId: auth.tenantId,
-    userId: auth.userId,
-    agentId,
-    userText: text,
-    attachments,
-    dialogId: preDialog?.id,
-  }).catch((error) => {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    throw new Error(message);
-  });
-
-  let dialog = preDialog ?? null;
-  if (!dialog) {
-    dialog = dialogId
-      ? await prisma.dialog.findFirst({
-          where: {
-            id: dialogId,
-            tenantId: auth.tenantId,
-            assistantId: reply.assistant.id,
-          },
-        })
-      : null;
-  }
-
-  if (!dialog) {
-    dialog = await prisma.dialog.create({
-      data: {
-        tenantId: auth.tenantId,
-        userId: auth.userId,
-        assistantId: reply.assistant.id,
-        status: "OPEN",
-        metadata: {
-          mode: "agent_test_chat",
-          agentId: reply.agent.id,
-          assistantId: reply.assistant.id,
-        },
-      },
-    });
-  }
-  dialogId = dialog.id;
-
-  await prisma.message.create({
-    data: {
-      tenantId: auth.tenantId,
-      dialogId,
-      userId: auth.userId,
-      role: "USER",
-      content: buildMessageContent(text, attachments),
-      tokenCount: reply.inputTokens,
-      provider: reply.providerForUsage as any,
-      model: reply.modelForUsage,
-    },
-  });
-
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const send = (payload: Record<string, unknown>) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
       };
+      let reply: Awaited<ReturnType<typeof buildAssistantReply>> | null = null;
       try {
+        reply = await buildAssistantReply({
+          tenantId: auth.tenantId,
+          userId: auth.userId,
+          agentId,
+          userText: text,
+          attachments,
+          dialogId: preDialog?.id,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        console.error("[agent-stream] buildAssistantReply failed:", message);
+        send({ type: "error", message });
+        controller.close();
+        return;
+      }
+      try {
+        let dialog = preDialog ?? null;
+        if (!dialog) {
+          dialog = dialogId
+            ? await prisma.dialog.findFirst({
+                where: {
+                  id: dialogId,
+                  tenantId: auth.tenantId,
+                  assistantId: reply.assistant.id,
+                },
+              })
+            : null;
+        }
+        if (!dialog) {
+          dialog = await prisma.dialog.create({
+            data: {
+              tenantId: auth.tenantId,
+              userId: auth.userId,
+              assistantId: reply.assistant.id,
+              status: "OPEN",
+              metadata: {
+                mode: "agent_test_chat",
+                agentId: reply.agent.id,
+                assistantId: reply.assistant.id,
+              },
+            },
+          });
+        }
+        dialogId = dialog.id;
+
+        await prisma.message.create({
+          data: {
+            tenantId: auth.tenantId,
+            dialogId,
+            userId: auth.userId,
+            role: "USER",
+            content: buildMessageContent(text, attachments),
+            tokenCount: reply.inputTokens,
+            provider: reply.providerForUsage as any,
+            model: reply.modelForUsage,
+          },
+        });
+
         send({ type: "meta", dialogId, routeMode: reply.routeMode });
         const chunks = tokenize(reply.responseText);
         let full = "";

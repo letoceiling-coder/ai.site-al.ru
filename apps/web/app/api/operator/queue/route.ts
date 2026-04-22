@@ -41,7 +41,7 @@ export async function GET(_request: Request) {
       metadata: true,
       createdAt: true,
       updatedAt: true,
-      user: { select: { id: true, email: true, name: true } },
+      user: { select: { id: true, email: true, displayName: true } },
       assistant: { select: { id: true, name: true } },
       messages: {
         orderBy: { createdAt: "desc" },
@@ -69,7 +69,7 @@ export async function GET(_request: Request) {
       takenOverAt: handoff.takenOverAt ?? null,
       takenOverByEmail: handoff.takenOverByEmail ?? null,
       takenOverByYou: handoff.takenOverBy === auth.userId,
-      user: d.user ? { id: d.user.id, email: d.user.email, name: d.user.name ?? null } : null,
+      user: d.user ? { id: d.user.id, email: d.user.email, name: d.user.displayName ?? null } : null,
       assistant: d.assistant ? { id: d.assistant.id, name: d.assistant.name } : null,
       lastMessage: last
         ? {

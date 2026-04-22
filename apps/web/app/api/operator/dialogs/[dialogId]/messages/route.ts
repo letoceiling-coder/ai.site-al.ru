@@ -46,7 +46,7 @@ export async function GET(_request: Request, context: Context) {
       metadata: true,
       createdAt: true,
       updatedAt: true,
-      user: { select: { id: true, email: true, name: true } },
+      user: { select: { id: true, email: true, displayName: true } },
       assistant: { select: { id: true, name: true } },
     },
   });
@@ -67,7 +67,7 @@ export async function GET(_request: Request, context: Context) {
       createdAt: dialog.createdAt.toISOString(),
       updatedAt: dialog.updatedAt.toISOString(),
       user: dialog.user
-        ? { id: dialog.user.id, email: dialog.user.email, name: dialog.user.name ?? null }
+        ? { id: dialog.user.id, email: dialog.user.email, name: dialog.user.displayName ?? null }
         : null,
       assistant: dialog.assistant
         ? { id: dialog.assistant.id, name: dialog.assistant.name }
