@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
+import { CitationText, CitationsList, type ChatCitation } from "@/components/chat-citations";
 
 type ChatMessage = {
   id: string;
@@ -8,6 +9,7 @@ type ChatMessage = {
   text: string;
   attachments: Array<{ name: string; url: string; mimeType: string; size: number }>;
   createdAt: string;
+  citations?: ChatCitation[];
 };
 
 type ChatSession = { id: string; status: string; createdAt: string; updatedAt: string };
@@ -222,6 +224,7 @@ export function AssistantTestChatPanel({ assistantId, assistantName }: Props) {
             toolName?: string;
             status?: string;
             summary?: string;
+            citations?: ChatCitation[];
           };
           if (payload.type === "meta" && payload.dialogId) {
             metaDialog = payload.dialogId;
@@ -230,6 +233,11 @@ export function AssistantTestChatPanel({ assistantId, assistantName }: Props) {
             finalText = payload.text ?? finalText;
             setChatMessages((prev) =>
               prev.map((m) => (m.id === aLocal ? { ...m, text: finalText } : m)),
+            );
+          } else if (payload.type === "citations" && Array.isArray(payload.citations)) {
+            const cits = payload.citations;
+            setChatMessages((prev) =>
+              prev.map((m) => (m.id === aLocal ? { ...m, citations: cits } : m)),
             );
           } else if (payload.type === "tool" && payload.toolName) {
             setLastToolEvents((prev) => [
@@ -326,7 +334,9 @@ export function AssistantTestChatPanel({ assistantId, assistantName }: Props) {
             className={`telegram-row ${m.role === "USER" ? "telegram-row-user" : "telegram-row-assistant"}`}
           >
             <div className={`chat-bubble telegram-bubble ${m.role === "USER" ? "chat-user" : "chat-assistant"}`}>
-              <p>{m.text}</p>
+              <p>
+                <CitationText text={m.text} citations={m.citations} />
+              </p>
               {m.attachments.length > 0 ? (
                 <div className="chat-attachments">
                   {m.attachments.map((f) => (
@@ -336,6 +346,7 @@ export function AssistantTestChatPanel({ assistantId, assistantName }: Props) {
                   ))}
                 </div>
               ) : null}
+              {m.role !== "USER" ? <CitationsList citations={m.citations} /> : null}
               <small>{asLocalDate(m.createdAt)}</small>
             </div>
           </div>

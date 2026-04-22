@@ -4,6 +4,7 @@ import { getAuthContext } from "@/lib/auth-context";
 import { buildAssistantReply, buildMessageContent } from "@/lib/agent-chat";
 import { extractHandoff, markDialogQueuedForOperator } from "@/lib/dialog-handoff";
 import { publishOperatorEvent } from "@/lib/operator-events";
+import { buildMessageMetadata, filterCitationsByText } from "@/lib/message-citations";
 
 type Context = {
   params: Promise<{ agentId: string }>;
@@ -176,15 +177,25 @@ export async function POST(request: Request, context: Context) {
           await sleep(35);
         }
 
+        const finalText = full.trim();
+        const usedCitations = filterCitationsByText(reply.citations ?? [], finalText);
+        const messageMetadata = buildMessageMetadata({
+          citations: usedCitations,
+          knowledgeBaseIds: reply.knowledgeBaseIds ?? [],
+        });
+        if (usedCitations.length > 0) {
+          send({ type: "citations", citations: usedCitations });
+        }
         const assistantMessage = await prisma.message.create({
           data: {
             tenantId: auth.tenantId,
             dialogId,
             role: "ASSISTANT",
-            content: buildMessageContent(full.trim(), []),
+            content: buildMessageContent(finalText, []),
             tokenCount: reply.outputTokens,
             provider: reply.providerForUsage as any,
             model: reply.modelForUsage,
+            metadata: messageMetadata ?? undefined,
           },
         });
 
@@ -257,7 +268,7 @@ export async function POST(request: Request, context: Context) {
           },
         });
 
-        send({ type: "done", text: full.trim() });
+        send({ type: "done", text: finalText, citations: usedCitations });
       } catch (error) {
         send({
           type: "error",

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { CitationText, CitationsList, type ChatCitation } from "@/components/chat-citations";
 
 type IntegrationOption = {
   id: string;
@@ -44,6 +45,7 @@ type ChatMessage = {
   text: string;
   attachments: Array<{ name: string; url: string; mimeType: string; size: number }>;
   createdAt: string;
+  citations?: ChatCitation[];
 };
 
 type ChatGetResponse = {
@@ -553,6 +555,7 @@ export function AgentsPageClient() {
             toolName?: string;
             status?: string;
             summary?: string;
+            citations?: ChatCitation[];
           };
           if (payload.type === "meta" && payload.dialogId) {
             setDialogId(payload.dialogId);
@@ -567,6 +570,11 @@ export function AgentsPageClient() {
                     }
                   : msg,
               ),
+            );
+          } else if (payload.type === "citations" && Array.isArray(payload.citations)) {
+            const cits = payload.citations;
+            setChatMessages((prev) =>
+              prev.map((msg) => (msg.id === assistantLocalId ? { ...msg, citations: cits } : msg)),
             );
           } else if (payload.type === "tool" && payload.toolName) {
             setLastToolEvents((prev) => [
@@ -977,7 +985,9 @@ export function AgentsPageClient() {
                         className={`telegram-row ${message.role === "USER" ? "telegram-row-user" : "telegram-row-assistant"}`}
                       >
                         <div className={`chat-bubble telegram-bubble ${message.role === "USER" ? "chat-user" : "chat-assistant"}`}>
-                          <p>{message.text}</p>
+                          <p>
+                            <CitationText text={message.text} citations={message.citations} />
+                          </p>
                           {message.attachments.length > 0 ? (
                             <div className="chat-attachments">
                               {message.attachments.map((file) => (
@@ -987,6 +997,7 @@ export function AgentsPageClient() {
                               ))}
                             </div>
                           ) : null}
+                          {message.role !== "USER" ? <CitationsList citations={message.citations} /> : null}
                           <small>{asLocalDate(message.createdAt)}</small>
                         </div>
                       </div>

@@ -8,6 +8,7 @@ import {
   resolveActiveAssistantId,
 } from "@/lib/dialog-handoff";
 import { publishOperatorEvent } from "@/lib/operator-events";
+import { buildMessageMetadata, filterCitationsByText } from "@/lib/message-citations";
 
 type Context = { params: Promise<{ assistantId: string }> };
 type StreamPayload = {
@@ -147,15 +148,25 @@ export async function POST(request: Request, context: Context) {
           send({ type: "token", token: chunk, text: full });
           await sleep(35);
         }
+        const finalText = full.trim();
+        const usedCitations = filterCitationsByText(reply.citations ?? [], finalText);
+        const messageMetadata = buildMessageMetadata({
+          citations: usedCitations,
+          knowledgeBaseIds: reply.knowledgeBaseIds ?? [],
+        });
+        if (usedCitations.length > 0) {
+          send({ type: "citations", citations: usedCitations });
+        }
         const assistantMessage = await prisma.message.create({
           data: {
             tenantId: auth.tenantId,
             dialogId,
             role: "ASSISTANT",
-            content: buildMessageContent(full.trim(), []),
+            content: buildMessageContent(finalText, []),
             tokenCount: reply.outputTokens,
             provider: reply.providerForUsage as never,
             model: reply.modelForUsage,
+            metadata: messageMetadata ?? undefined,
           },
         });
         let queuedForOperator = false;
@@ -225,7 +236,7 @@ export async function POST(request: Request, context: Context) {
             sourceId: dialogId,
           },
         });
-        send({ type: "done", text: full.trim() });
+        send({ type: "done", text: finalText, citations: usedCitations });
       } catch (error) {
         send({ type: "error", message: error instanceof Error ? error.message : "Streaming failed" });
       } finally {

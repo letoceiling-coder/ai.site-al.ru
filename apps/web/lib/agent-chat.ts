@@ -756,10 +756,14 @@ export async function buildAssistantReply(input: {
     kbIds.length > 0
       ? await resolveMaxContextCharsForBases(input.tenantId, kbIds)
       : { maxChars: 12_000, grounding: "strict" as const };
-  const kbText =
+  const kbCtx =
     kbIds.length > 0
-      ? await buildKnowledgeContextForBases(input.tenantId, kbIds, input.userText, kbResolved.maxChars).catch(() => "")
-      : "";
+      ? await buildKnowledgeContextForBases(input.tenantId, kbIds, input.userText, kbResolved.maxChars).catch(() => ({
+          text: "",
+          citations: [],
+          hasCitations: false,
+        }))
+      : { text: "", citations: [], hasCitations: false };
   const persona = extractAssistantSettings(assistant.settingsJson);
   const personaDirectives = buildPersonaDirectives(persona);
   const configuredHandoffs = extractHandoffTargets(assistant.settingsJson);
@@ -769,7 +773,7 @@ export async function buildAssistantReply(input: {
     `You are agent "${agent.name}".` +
     (personaDirectives ? `\n\n${personaDirectives}` : "") +
     (handoffDirective ? `\n\n${handoffDirective}` : "");
-  const systemForModel = buildGroundedSystemPrompt(basePrompt, kbText, kbResolved.grounding);
+  const systemForModel = buildGroundedSystemPrompt(basePrompt, kbCtx.text, kbResolved.grounding, kbCtx.hasCitations);
 
   const assistantOverrides = extractGenerationOverrides(assistant.settingsJson);
   const overrides: AssistantGenerationOverrides = {
@@ -863,6 +867,8 @@ export async function buildAssistantReply(input: {
     providerForUsage: shouldUseOpenRouter ? "OPENAI" : integration.provider,
     modelForUsage: result.resolvedModel ?? (shouldUseOpenRouter ? String(openRouterConfig.model || agent.model) : agent.model),
     toolEvents: result.toolEvents,
+    citations: kbCtx.citations,
+    knowledgeBaseIds: kbIds,
   };
 }
 
@@ -921,12 +927,15 @@ export async function buildAssistantReplyForUserAssistant(input: {
     kbIds.length > 0
       ? await resolveMaxContextCharsForBases(input.tenantId, kbIds)
       : { maxChars: 12_000, grounding: "strict" as const };
-  const kbText = await buildKnowledgeContextForBases(
-    input.tenantId,
-    kbIds,
-    input.userText,
-    kbResolved.maxChars,
-  ).catch(() => "");
+  const kbCtx =
+    kbIds.length > 0
+      ? await buildKnowledgeContextForBases(
+          input.tenantId,
+          kbIds,
+          input.userText,
+          kbResolved.maxChars,
+        ).catch(() => ({ text: "", citations: [], hasCitations: false }))
+      : { text: "", citations: [], hasCitations: false };
   const persona = extractAssistantSettings(assistant.settingsJson);
   const personaDirectives = buildPersonaDirectives(persona);
   const configuredHandoffs = extractHandoffTargets(assistant.settingsJson);
@@ -937,7 +946,7 @@ export async function buildAssistantReplyForUserAssistant(input: {
     baseSystemRaw +
     (personaDirectives ? `\n\n${personaDirectives}` : "") +
     (handoffDirective ? `\n\n${handoffDirective}` : "");
-  const systemForModel = buildGroundedSystemPrompt(baseSystem, kbText, kbResolved.grounding);
+  const systemForModel = buildGroundedSystemPrompt(baseSystem, kbCtx.text, kbResolved.grounding, kbCtx.hasCitations);
 
   const assistantOverrides = extractGenerationOverrides(assistant.settingsJson);
   const agentOverrides = linkAgent
@@ -1021,5 +1030,7 @@ export async function buildAssistantReplyForUserAssistant(input: {
     providerForUsage: shouldUseOpenRouter ? "OPENAI" : integration.provider,
     modelForUsage: result.resolvedModel ?? (shouldUseOpenRouter ? String(openRouterConfig.model || model) : model),
     toolEvents: result.toolEvents,
+    citations: kbCtx.citations,
+    knowledgeBaseIds: kbIds,
   };
 }

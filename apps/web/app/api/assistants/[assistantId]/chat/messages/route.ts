@@ -3,6 +3,7 @@ import { fail, ok } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
 import { buildMessageContent, parseMessageContent } from "@/lib/agent-chat";
 import { extractAssistantSettings } from "@/lib/assistant-settings";
+import { extractCitations } from "@/lib/message-citations";
 
 type Context = { params: Promise<{ assistantId: string }> };
 
@@ -12,6 +13,7 @@ function normalizeMessage(message: {
   content: string;
   createdAt: Date;
   userId: string | null;
+  metadata?: unknown;
 }) {
   const parsed = parseMessageContent(message.content);
   return {
@@ -21,6 +23,7 @@ function normalizeMessage(message: {
     attachments: parsed.attachments,
     createdAt: message.createdAt.toISOString(),
     userId: message.userId,
+    citations: extractCitations(message.metadata),
   };
 }
 

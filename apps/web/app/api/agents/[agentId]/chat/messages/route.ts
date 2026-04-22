@@ -4,6 +4,7 @@ import { getAuthContext } from "@/lib/auth-context";
 import { buildAssistantReply, buildMessageContent, parseMessageContent } from "@/lib/agent-chat";
 import { markDialogQueuedForOperator } from "@/lib/dialog-handoff";
 import { publishOperatorEvent } from "@/lib/operator-events";
+import { buildMessageMetadata, extractCitations, filterCitationsByText } from "@/lib/message-citations";
 
 type Context = {
   params: Promise<{ agentId: string }>;
@@ -21,6 +22,7 @@ function normalizeMessage(message: {
   content: string;
   createdAt: Date;
   userId: string | null;
+  metadata?: unknown;
 }) {
   const parsed = parseMessageContent(message.content);
   return {
@@ -30,6 +32,7 @@ function normalizeMessage(message: {
     attachments: parsed.attachments,
     createdAt: message.createdAt.toISOString(),
     userId: message.userId,
+    citations: extractCitations(message.metadata),
   };
 }
 
@@ -147,6 +150,11 @@ export async function POST(request: Request, context: Context) {
     },
   });
 
+  const usedCitations = filterCitationsByText(reply.citations ?? [], reply.responseText);
+  const messageMetadata = buildMessageMetadata({
+    citations: usedCitations,
+    knowledgeBaseIds: reply.knowledgeBaseIds ?? [],
+  });
   const assistantMessage = await prisma.message.create({
     data: {
       tenantId: auth.tenantId,
@@ -156,6 +164,7 @@ export async function POST(request: Request, context: Context) {
       tokenCount: reply.outputTokens,
       provider: reply.providerForUsage as any,
       model: reply.modelForUsage,
+      metadata: messageMetadata ?? undefined,
     },
   });
 

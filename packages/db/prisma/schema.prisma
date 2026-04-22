@@ -532,6 +532,8 @@ model Message {
   tokenCount    Int?
   provider      ProviderType?
   model         String?
+  /// RAG-audit и прочие служебные данные: citations, chunkIds, knowledgeBaseIds, toolEvents, ...
+  metadata      Json?
   createdAt     DateTime    @default(now())
   dialog        Dialog      @relation(fields: [dialogId], references: [id], onDelete: Cascade)
   user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
