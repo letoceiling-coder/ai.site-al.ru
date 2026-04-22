@@ -3,7 +3,12 @@ import { prisma } from "@ai/db";
 import { fail, ok } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
 import { isConnectedIntegration } from "@/lib/tenant-ai-integrations";
-import { mergeAssistantSettings } from "@/lib/assistant-settings";
+import {
+  mergeAssistantSettings,
+  mergeGenerationOverrides,
+  normalizeGenerationOverrides,
+} from "@/lib/assistant-settings";
+import { mergeAssistantTools, normalizeAssistantTools } from "@/lib/assistant-tools";
 
 type Context = { params: Promise<{ assistantId: string }> };
 type AssistantStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
@@ -17,6 +22,8 @@ type UpdatePayload = {
   knowledgeBaseIds?: unknown;
   model?: unknown;
   persona?: unknown;
+  generation?: unknown;
+  tools?: unknown;
 };
 
 function isAssistantStatus(value: unknown): value is AssistantStatus {
@@ -125,7 +132,23 @@ export async function PUT(request: Request, context: Context) {
     if (!systemPrompt) {
       return fail("Поле «Системный промпт» не может быть пустым", "VALIDATION_ERROR", 400);
     }
-    data.systemPrompt = systemPrompt;
+    if (systemPrompt !== existing.systemPrompt) {
+      data.systemPrompt = systemPrompt;
+      data.version = { increment: 1 };
+      const base =
+        existing.settingsJson && typeof existing.settingsJson === "object" && !Array.isArray(existing.settingsJson)
+          ? ({ ...(existing.settingsJson as Record<string, unknown>) } as Record<string, unknown>)
+          : ({} as Record<string, unknown>);
+      const history = Array.isArray(base.promptHistory) ? [...(base.promptHistory as unknown[])] : [];
+      history.unshift({
+        version: existing.version,
+        prompt: existing.systemPrompt,
+        createdAt: new Date().toISOString(),
+        author: auth.userId,
+      });
+      base.promptHistory = history.slice(0, 20);
+      data.settingsJson = base;
+    }
   }
   if (isAssistantStatus(body.status)) {
     data.status = body.status;
@@ -200,6 +223,22 @@ export async function PUT(request: Request, context: Context) {
         ? (body.persona as Record<string, unknown>)
         : {};
     data.settingsJson = mergeAssistantSettings(current, personaPayload);
+  }
+
+  if (body.generation !== undefined) {
+    const current = (data.settingsJson ?? currentSettings) as Record<string, unknown>;
+    const gen = body.generation && typeof body.generation === "object" && !Array.isArray(body.generation)
+      ? normalizeGenerationOverrides(body.generation)
+      : normalizeGenerationOverrides({});
+    data.settingsJson = mergeGenerationOverrides(current, gen);
+  }
+
+  if (body.tools !== undefined) {
+    const current = (data.settingsJson ?? currentSettings) as Record<string, unknown>;
+    const toolsPayload = body.tools && typeof body.tools === "object" && !Array.isArray(body.tools)
+      ? normalizeAssistantTools(body.tools)
+      : normalizeAssistantTools({});
+    data.settingsJson = mergeAssistantTools(current, toolsPayload);
   }
 
   const kbIds = parseKnowledgeBaseIds(body.knowledgeBaseIds);

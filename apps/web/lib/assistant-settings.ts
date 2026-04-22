@@ -1,7 +1,79 @@
 /**
  * Персоналия и стиль ответов ассистента: tone, length, language, emoji, template.
+ * Плюс параметры генерации (temperature, maxTokens, topP).
  * Всё хранится в поле Assistant.settingsJson (наряду с useOpenRouter, model, и другими ключами).
  */
+
+export type AssistantGenerationOverrides = {
+  /** null = использовать дефолт (0.7) */
+  temperature: number | null;
+  /** null = без ограничения */
+  maxTokens: number | null;
+  /** null = дефолт (1.0) */
+  topP: number | null;
+};
+
+export const DEFAULT_ASSISTANT_GENERATION: AssistantGenerationOverrides = {
+  temperature: null,
+  maxTokens: null,
+  topP: null,
+};
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function parseNumberOrNull(raw: unknown, min: number, max: number, allowInt?: boolean): number | null {
+  if (raw === null || raw === undefined || raw === "") {
+    return null;
+  }
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n)) {
+    return null;
+  }
+  const clamped = clamp(n, min, max);
+  return allowInt ? Math.round(clamped) : clamped;
+}
+
+export function normalizeGenerationOverrides(raw: unknown): AssistantGenerationOverrides {
+  if (!raw || typeof raw !== "object") {
+    return { ...DEFAULT_ASSISTANT_GENERATION };
+  }
+  const v = raw as Record<string, unknown>;
+  return {
+    temperature: parseNumberOrNull(v.temperature, 0, 2),
+    maxTokens: parseNumberOrNull(v.maxTokens, 1, 8192, true),
+    topP: parseNumberOrNull(v.topP, 0, 1),
+  };
+}
+
+export function extractGenerationOverrides(settingsJson: unknown): AssistantGenerationOverrides {
+  if (!settingsJson || typeof settingsJson !== "object" || Array.isArray(settingsJson)) {
+    return { ...DEFAULT_ASSISTANT_GENERATION };
+  }
+  const v = settingsJson as Record<string, unknown>;
+  return {
+    temperature: parseNumberOrNull(v.temperature, 0, 2),
+    maxTokens: parseNumberOrNull(v.maxTokens, 1, 8192, true),
+    topP: parseNumberOrNull(v.topP, 0, 1),
+  };
+}
+
+export function mergeGenerationOverrides(
+  existing: unknown,
+  incoming: Partial<AssistantGenerationOverrides>,
+): Record<string, unknown> {
+  const base: Record<string, unknown> =
+    existing && typeof existing === "object" && !Array.isArray(existing)
+      ? { ...(existing as Record<string, unknown>) }
+      : {};
+  const current = extractGenerationOverrides(existing);
+  const merged = normalizeGenerationOverrides({ ...current, ...incoming });
+  base.temperature = merged.temperature;
+  base.maxTokens = merged.maxTokens;
+  base.topP = merged.topP;
+  return base;
+}
 
 export type AssistantTemplate =
   | "blank"

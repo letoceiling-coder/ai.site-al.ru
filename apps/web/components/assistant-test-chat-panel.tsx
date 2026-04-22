@@ -43,6 +43,9 @@ export function AssistantTestChatPanel({ assistantId, assistantName }: Props) {
   const [dragActive, setDragActive] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [greeting, setGreeting] = useState<{ welcomeMessage: string | null; quickReplies: string[] } | null>(null);
+  const [lastToolEvents, setLastToolEvents] = useState<
+    Array<{ toolName: string; status: string; summary: string }>
+  >([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadSessions = useCallback(async (preferredId?: string) => {
@@ -171,6 +174,7 @@ export function AssistantTestChatPanel({ assistantId, assistantName }: Props) {
     ]);
     setChatInput("");
     setChatFiles([]);
+    setLastToolEvents([]);
 
     const res = await fetch(`/api/assistants/${assistantId}/chat/messages/stream`, {
       method: "POST",
@@ -215,6 +219,9 @@ export function AssistantTestChatPanel({ assistantId, assistantName }: Props) {
             text?: string;
             dialogId?: string;
             message?: string;
+            toolName?: string;
+            status?: string;
+            summary?: string;
           };
           if (payload.type === "meta" && payload.dialogId) {
             metaDialog = payload.dialogId;
@@ -224,6 +231,15 @@ export function AssistantTestChatPanel({ assistantId, assistantName }: Props) {
             setChatMessages((prev) =>
               prev.map((m) => (m.id === aLocal ? { ...m, text: finalText } : m)),
             );
+          } else if (payload.type === "tool" && payload.toolName) {
+            setLastToolEvents((prev) => [
+              ...prev,
+              {
+                toolName: payload.toolName ?? "",
+                status: payload.status ?? "",
+                summary: payload.summary ?? "",
+              },
+            ]);
           } else if (payload.type === "done") {
             finalText = payload.text ?? finalText;
           } else if (payload.type === "error") {
@@ -325,6 +341,22 @@ export function AssistantTestChatPanel({ assistantId, assistantName }: Props) {
           </div>
         ))}
         {chatLoading ? <p style={{ color: "var(--muted)" }}>Ассистент печатает…</p> : null}
+        {lastToolEvents.length > 0 ? (
+          <div className="chat-tool-events">
+            <strong>Вызваны инструменты:</strong>
+            <ul>
+              {lastToolEvents.map((e, idx) => (
+                <li key={`${e.toolName}-${idx}`}>
+                  <span className={`chat-tool-status chat-tool-${e.status.toLowerCase()}`}>
+                    {e.status === "COMPLETED" ? "✓" : "✕"}
+                  </span>{" "}
+                  <code>{e.toolName}</code>
+                  {e.summary ? <span> — {e.summary}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
       {chatMessages.length === 0 && greeting?.quickReplies && greeting.quickReplies.length > 0 ? (
         <div className="assistant-quick-replies">

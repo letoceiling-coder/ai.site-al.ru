@@ -5,7 +5,18 @@ import { resolveMaxContextCharsForBases } from "@/lib/knowledge-settings";
 import {
   buildPersonaDirectives,
   extractAssistantSettings,
+  extractGenerationOverrides,
+  type AssistantGenerationOverrides,
 } from "@/lib/assistant-settings";
+import {
+  extractAssistantTools,
+  resolveEnabledTools,
+  toAnthropicTools,
+  toGeminiTools,
+  toOpenAiTools,
+  type AssistantToolsConfig,
+} from "@/lib/assistant-tools";
+import { executeAssistantTool, type ToolEvent, type ToolExecContext } from "@/lib/assistant-tool-exec";
 import { readFile } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import { decodeSecret } from "@/lib/integrations";
@@ -103,13 +114,26 @@ function buildAttachmentSummary(attachments: AttachmentPayload[]) {
     .join("\n");
 }
 
-async function completeWithOpenAi(
-  apiKey: string,
-  model: string,
-  systemPrompt: string,
+const TOOL_LOOP_MAX_ITERATIONS = 3;
+
+type ToolRuntime = {
+  config: AssistantToolsConfig;
+  execCtx: ToolExecContext;
+};
+
+type CompletionResult = {
+  text: string;
+  inputTokens: number;
+  outputTokens: number;
+  route: "direct" | "openrouter";
+  resolvedModel?: string;
+  toolEvents: ToolEvent[];
+};
+
+function buildOpenAiUserContent(
   userText: string,
   attachments: AttachmentPayload[],
-) {
+): Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> {
   const content: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [
     { type: "text", text: userText },
   ];
@@ -122,35 +146,185 @@ async function completeWithOpenAi(
       image_url: { url: `data:${file.mimeType};base64,${file.inlineBase64}` },
     });
   }
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  return content;
+}
+
+async function runOpenAiLikeLoop(
+  endpoint: string,
+  headers: Record<string, string>,
+  routeLabel: "direct" | "openrouter",
+  model: string,
+  systemPrompt: string,
+  userText: string,
+  attachments: AttachmentPayload[],
+  overrides: AssistantGenerationOverrides | undefined,
+  tools: ToolRuntime | undefined,
+  errLabel: string,
+): Promise<CompletionResult> {
+  const userContent = buildOpenAiUserContent(userText, attachments);
+  const messages: Array<Record<string, unknown>> = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userContent },
+  ];
+  const toolSpecs = tools ? toOpenAiTools(tools.config) : [];
+  const toolEvents: ToolEvent[] = [];
+  let totalInput = 0;
+  let totalOutput = 0;
+  let resolvedModel: string | undefined;
+
+  for (let iter = 0; iter < TOOL_LOOP_MAX_ITERATIONS; iter += 1) {
+    const payload: Record<string, unknown> = {
       model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content },
-      ],
-      temperature: 0.7,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`OpenAI error: ${response.status}`);
+      messages,
+      temperature: overrides?.temperature ?? 0.7,
+    };
+    if (overrides?.maxTokens != null) {
+      payload.max_tokens = overrides.maxTokens;
+    }
+    if (overrides?.topP != null) {
+      payload.top_p = overrides.topP;
+    }
+    if (toolSpecs.length > 0) {
+      payload.tools = toolSpecs;
+      payload.tool_choice = "auto";
+    }
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(`${errLabel} error: ${response.status}`);
+    }
+    const json = (await response.json()) as {
+      choices?: Array<{
+        message?: {
+          content?: string | null;
+          tool_calls?: Array<{
+            id: string;
+            type?: string;
+            function?: { name?: string; arguments?: string };
+          }>;
+        };
+        finish_reason?: string;
+      }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+      model?: string;
+    };
+    totalInput += json.usage?.prompt_tokens ?? 0;
+    totalOutput += json.usage?.completion_tokens ?? 0;
+    if (json.model) {
+      resolvedModel = json.model;
+    }
+    const choice = json.choices?.[0];
+    const msg = choice?.message ?? {};
+    const toolCalls = msg.tool_calls ?? [];
+
+    if (tools && toolCalls.length > 0) {
+      messages.push({
+        role: "assistant",
+        content: msg.content ?? "",
+        tool_calls: toolCalls,
+      });
+      for (const call of toolCalls) {
+        const name = call.function?.name ?? "";
+        let args: Record<string, unknown> = {};
+        try {
+          args = call.function?.arguments ? (JSON.parse(call.function.arguments) as Record<string, unknown>) : {};
+        } catch {
+          args = {};
+        }
+        const toolCfg = (tools.config as Record<string, import("@/lib/assistant-tools").AssistantToolConfig>)[name];
+        const event = toolCfg
+          ? await executeAssistantTool(name, args, toolCfg, tools.execCtx)
+          : {
+              toolName: name as "create_lead",
+              inputJson: args,
+              outputJson: { ok: false, error: "tool_not_configured" },
+              resultText: "Инструмент не настроен на этом ассистенте.",
+              status: "FAILED" as const,
+            };
+        toolEvents.push(event);
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: JSON.stringify({ ok: event.status === "COMPLETED", result: event.outputJson, summary: event.resultText }),
+        });
+      }
+      continue;
+    }
+
+    const text = (typeof msg.content === "string" ? msg.content : "").trim();
+    const fallbackInput = totalInput || estimateTokens(userText);
+    const fallbackOutput = totalOutput || estimateTokens(text || "ok");
+    return {
+      text: text || "Пустой ответ модели.",
+      inputTokens: fallbackInput,
+      outputTokens: fallbackOutput,
+      route: routeLabel,
+      resolvedModel,
+      toolEvents,
+    };
   }
-  const json = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
-  };
-  const text = json.choices?.[0]?.message?.content?.trim() ?? "";
+
   return {
-    text: text || "Пустой ответ модели.",
-    inputTokens: json.usage?.prompt_tokens ?? estimateTokens(userText),
-    outputTokens: json.usage?.completion_tokens ?? estimateTokens(text || "ok"),
-    route: "direct" as const,
+    text: "Достигнут лимит вызовов инструментов. Попробуй ещё раз или уточни запрос.",
+    inputTokens: totalInput || estimateTokens(userText),
+    outputTokens: totalOutput || 10,
+    route: routeLabel,
+    resolvedModel,
+    toolEvents,
   };
+}
+
+async function completeWithOpenAi(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userText: string,
+  attachments: AttachmentPayload[],
+  overrides?: AssistantGenerationOverrides,
+  tools?: ToolRuntime,
+) {
+  return runOpenAiLikeLoop(
+    "https://api.openai.com/v1/chat/completions",
+    { Authorization: `Bearer ${apiKey}` },
+    "direct",
+    model,
+    systemPrompt,
+    userText,
+    attachments,
+    overrides,
+    tools,
+    "OpenAI",
+  );
+}
+
+async function completeWithOpenRouter(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userText: string,
+  attachments: AttachmentPayload[],
+  overrides?: AssistantGenerationOverrides,
+  tools?: ToolRuntime,
+) {
+  return runOpenAiLikeLoop(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      Authorization: `Bearer ${apiKey}`,
+      "HTTP-Referer": "https://ai.site-al.ru",
+      "X-Title": "ai.site-al.ru",
+    },
+    "openrouter",
+    model,
+    systemPrompt,
+    userText,
+    attachments,
+    overrides,
+    tools,
+    "OpenRouter",
+  );
 }
 
 async function completeWithAnthropic(
@@ -159,54 +333,136 @@ async function completeWithAnthropic(
   systemPrompt: string,
   userText: string,
   attachments: AttachmentPayload[],
-) {
-  const content: Array<
+  overrides?: AssistantGenerationOverrides,
+  tools?: ToolRuntime,
+): Promise<CompletionResult> {
+  type AnthropicContentBlock =
     | { type: "text"; text: string }
     | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
-  > = [{ type: "text", text: userText }];
+    | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+    | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
+
+  const initialUserContent: AnthropicContentBlock[] = [{ type: "text", text: userText }];
   for (const file of attachments) {
     if (!file.inlineBase64 || !file.mimeType.startsWith("image/")) {
       continue;
     }
-    content.push({
+    initialUserContent.push({
       type: "image",
-      source: {
-        type: "base64",
-        media_type: file.mimeType,
-        data: file.inlineBase64,
-      },
+      source: { type: "base64", media_type: file.mimeType, data: file.inlineBase64 },
     });
   }
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  const messages: Array<{ role: "user" | "assistant"; content: AnthropicContentBlock[] }> = [
+    { role: "user", content: initialUserContent },
+  ];
+  const toolSpecs = tools ? toAnthropicTools(tools.config) : [];
+  const toolEvents: ToolEvent[] = [];
+  let totalInput = 0;
+  let totalOutput = 0;
+
+  for (let iter = 0; iter < TOOL_LOOP_MAX_ITERATIONS; iter += 1) {
+    const payload: Record<string, unknown> = {
       model,
-      max_tokens: 1024,
+      max_tokens: overrides?.maxTokens ?? 1024,
       system: systemPrompt,
-      messages: [{ role: "user", content }],
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`Anthropic error: ${response.status}`);
+      messages,
+    };
+    if (overrides?.temperature != null) {
+      payload.temperature = overrides.temperature;
+    }
+    if (overrides?.topP != null) {
+      payload.top_p = overrides.topP;
+    }
+    if (toolSpecs.length > 0) {
+      payload.tools = toolSpecs;
+    }
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(`Anthropic error: ${response.status}`);
+    }
+    const json = (await response.json()) as {
+      content?: Array<
+        | { type: "text"; text?: string }
+        | { type: "tool_use"; id: string; name: string; input?: Record<string, unknown> }
+      >;
+      usage?: { input_tokens?: number; output_tokens?: number };
+      stop_reason?: string;
+    };
+    totalInput += json.usage?.input_tokens ?? 0;
+    totalOutput += json.usage?.output_tokens ?? 0;
+    const blocks = Array.isArray(json.content) ? json.content : [];
+    const toolUses = blocks.filter(
+      (b): b is { type: "tool_use"; id: string; name: string; input?: Record<string, unknown> } =>
+        (b as { type?: string }).type === "tool_use",
+    );
+
+    if (tools && toolUses.length > 0) {
+      const assistantBlocks: AnthropicContentBlock[] = [];
+      for (const b of blocks) {
+        if (b.type === "text" && typeof b.text === "string") {
+          assistantBlocks.push({ type: "text", text: b.text });
+        } else if (b.type === "tool_use") {
+          assistantBlocks.push({ type: "tool_use", id: b.id, name: b.name, input: b.input ?? {} });
+        }
+      }
+      messages.push({ role: "assistant", content: assistantBlocks });
+      const nextUserBlocks: AnthropicContentBlock[] = [];
+      for (const use of toolUses) {
+        const args = (use.input ?? {}) as Record<string, unknown>;
+        const toolCfg = (tools.config as Record<string, import("@/lib/assistant-tools").AssistantToolConfig>)[use.name];
+        const event = toolCfg
+          ? await executeAssistantTool(use.name, args, toolCfg, tools.execCtx)
+          : {
+              toolName: use.name as "create_lead",
+              inputJson: args,
+              outputJson: { ok: false, error: "tool_not_configured" },
+              resultText: "Инструмент не настроен.",
+              status: "FAILED" as const,
+            };
+        toolEvents.push(event);
+        nextUserBlocks.push({
+          type: "tool_result",
+          tool_use_id: use.id,
+          content: JSON.stringify({
+            ok: event.status === "COMPLETED",
+            result: event.outputJson,
+            summary: event.resultText,
+          }),
+          is_error: event.status !== "COMPLETED",
+        });
+      }
+      messages.push({ role: "user", content: nextUserBlocks });
+      continue;
+    }
+
+    const text = blocks
+      .filter((b): b is { type: "text"; text?: string } => b.type === "text")
+      .map((b) => b.text ?? "")
+      .join("\n")
+      .trim();
+    return {
+      text: text || "Пустой ответ модели.",
+      inputTokens: totalInput || estimateTokens(userText),
+      outputTokens: totalOutput || estimateTokens(text || "ok"),
+      route: "direct",
+      toolEvents,
+    };
   }
-  const json = (await response.json()) as {
-    content?: Array<{ type?: string; text?: string }>;
-    usage?: { input_tokens?: number; output_tokens?: number };
-  };
-  const text =
-    json.content?.find((item) => item.type === "text")?.text?.trim() ??
-    json.content?.map((item) => item.text ?? "").join("\n").trim() ??
-    "";
+
   return {
-    text: text || "Пустой ответ модели.",
-    inputTokens: json.usage?.input_tokens ?? estimateTokens(userText),
-    outputTokens: json.usage?.output_tokens ?? estimateTokens(text || "ok"),
-    route: "direct" as const,
+    text: "Достигнут лимит вызовов инструментов. Попробуй ещё раз или уточни запрос.",
+    inputTokens: totalInput || estimateTokens(userText),
+    outputTokens: totalOutput || 10,
+    route: "direct",
+    toolEvents,
   };
 }
 
@@ -216,100 +472,138 @@ async function completeWithGemini(
   systemPrompt: string,
   userText: string,
   attachments: AttachmentPayload[],
-) {
-  const combined = systemPrompt.trim() ? `${systemPrompt.trim()}\n\n---\n\n${userText}` : userText;
-  const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: combined }];
-  for (const file of attachments) {
-    if (!file.inlineBase64 || !file.mimeType.startsWith("image/")) {
-      continue;
-    }
-    parts.push({
-      inlineData: {
-        mimeType: file.mimeType,
-        data: file.inlineBase64,
-      },
-    });
-  }
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    {
-      method: "POST",
-      headers: {
-        "x-goog-api-key": apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-      }),
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`Gemini error: ${response.status}`);
-  }
-  const json = (await response.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
-  };
-  const text = json.candidates?.[0]?.content?.parts?.map((item) => item.text ?? "").join("\n").trim() ?? "";
-  return {
-    text: text || "Пустой ответ модели.",
-    inputTokens: json.usageMetadata?.promptTokenCount ?? estimateTokens(combined),
-    outputTokens: json.usageMetadata?.candidatesTokenCount ?? estimateTokens(text || "ok"),
-    route: "direct" as const,
-  };
-}
+  overrides?: AssistantGenerationOverrides,
+  tools?: ToolRuntime,
+): Promise<CompletionResult> {
+  type GeminiPart =
+    | { text: string }
+    | { inlineData: { mimeType: string; data: string } }
+    | { functionCall: { name: string; args?: Record<string, unknown> } }
+    | { functionResponse: { name: string; response: Record<string, unknown> } };
 
-async function completeWithOpenRouter(
-  apiKey: string,
-  model: string,
-  systemPrompt: string,
-  userText: string,
-  attachments: AttachmentPayload[],
-) {
-  const content: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [
-    { type: "text", text: userText },
-  ];
+  const initialParts: GeminiPart[] = [{ text: userText }];
   for (const file of attachments) {
     if (!file.inlineBase64 || !file.mimeType.startsWith("image/")) {
       continue;
     }
-    content.push({
-      type: "image_url",
-      image_url: { url: `data:${file.mimeType};base64,${file.inlineBase64}` },
-    });
+    initialParts.push({ inlineData: { mimeType: file.mimeType, data: file.inlineBase64 } });
   }
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://ai.site-al.ru",
-      "X-Title": "ai.site-al.ru",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content },
-      ],
-      temperature: 0.7,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`OpenRouter error: ${response.status}`);
+  const contents: Array<{ role: "user" | "model"; parts: GeminiPart[] }> = [
+    { role: "user", parts: initialParts },
+  ];
+  const toolSpecs = tools ? toGeminiTools(tools.config) : [];
+  const toolEvents: ToolEvent[] = [];
+  let totalInput = 0;
+  let totalOutput = 0;
+
+  for (let iter = 0; iter < TOOL_LOOP_MAX_ITERATIONS; iter += 1) {
+    const generationConfig: Record<string, unknown> = {};
+    if (overrides?.temperature != null) generationConfig.temperature = overrides.temperature;
+    if (overrides?.maxTokens != null) generationConfig.maxOutputTokens = overrides.maxTokens;
+    if (overrides?.topP != null) generationConfig.topP = overrides.topP;
+    const body: Record<string, unknown> = {
+      contents,
+      systemInstruction: { role: "system", parts: [{ text: systemPrompt }] },
+    };
+    if (Object.keys(generationConfig).length > 0) {
+      body.generationConfig = generationConfig;
+    }
+    if (toolSpecs.length > 0) {
+      body.tools = toolSpecs;
+    }
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: "POST",
+        headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Gemini error: ${response.status}`);
+    }
+    const json = (await response.json()) as {
+      candidates?: Array<{
+        content?: {
+          role?: string;
+          parts?: Array<{
+            text?: string;
+            functionCall?: { name?: string; args?: Record<string, unknown> };
+          }>;
+        };
+      }>;
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+    };
+    totalInput += json.usageMetadata?.promptTokenCount ?? 0;
+    totalOutput += json.usageMetadata?.candidatesTokenCount ?? 0;
+    const parts = json.candidates?.[0]?.content?.parts ?? [];
+    const functionCalls = parts
+      .map((p) => p.functionCall)
+      .filter((c): c is { name?: string; args?: Record<string, unknown> } => Boolean(c?.name));
+
+    if (tools && functionCalls.length > 0) {
+      const modelParts: GeminiPart[] = parts
+        .map((p): GeminiPart | null => {
+          if (typeof p.text === "string" && p.text) {
+            return { text: p.text };
+          }
+          if (p.functionCall?.name) {
+            return { functionCall: { name: p.functionCall.name, args: p.functionCall.args ?? {} } };
+          }
+          return null;
+        })
+        .filter((p): p is GeminiPart => p !== null);
+      contents.push({ role: "model", parts: modelParts });
+
+      const responseParts: GeminiPart[] = [];
+      for (const call of functionCalls) {
+        const name = call.name ?? "";
+        const args = (call.args ?? {}) as Record<string, unknown>;
+        const toolCfg = (tools.config as Record<string, import("@/lib/assistant-tools").AssistantToolConfig>)[name];
+        const event = toolCfg
+          ? await executeAssistantTool(name, args, toolCfg, tools.execCtx)
+          : {
+              toolName: name as "create_lead",
+              inputJson: args,
+              outputJson: { ok: false, error: "tool_not_configured" },
+              resultText: "Инструмент не настроен.",
+              status: "FAILED" as const,
+            };
+        toolEvents.push(event);
+        responseParts.push({
+          functionResponse: {
+            name,
+            response: {
+              ok: event.status === "COMPLETED",
+              result: event.outputJson,
+              summary: event.resultText,
+            },
+          },
+        });
+      }
+      contents.push({ role: "user", parts: responseParts });
+      continue;
+    }
+
+    const text = parts
+      .map((p) => p.text ?? "")
+      .join("\n")
+      .trim();
+    return {
+      text: text || "Пустой ответ модели.",
+      inputTokens: totalInput || estimateTokens(userText),
+      outputTokens: totalOutput || estimateTokens(text || "ok"),
+      route: "direct",
+      toolEvents,
+    };
   }
-  const json = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
-    model?: string;
-  };
-  const text = json.choices?.[0]?.message?.content?.trim() ?? "";
+
   return {
-    text: text || "Пустой ответ модели.",
-    inputTokens: json.usage?.prompt_tokens ?? estimateTokens(userText),
-    outputTokens: json.usage?.completion_tokens ?? estimateTokens(text || "ok"),
-    route: "openrouter" as const,
-    resolvedModel: json.model ?? model,
+    text: "Достигнут лимит вызовов инструментов. Попробуй ещё раз или уточни запрос.",
+    inputTokens: totalInput || estimateTokens(userText),
+    outputTokens: totalOutput || 10,
+    route: "direct",
+    toolEvents,
   };
 }
 
@@ -408,13 +702,27 @@ export async function buildAssistantReply(input: {
   const basePrompt = `You are agent "${agent.name}".${personaDirectives ? `\n\n${personaDirectives}` : ""}`;
   const systemForModel = buildGroundedSystemPrompt(basePrompt, kbText, kbResolved.grounding);
 
-  let result: {
-    text: string;
-    inputTokens: number;
-    outputTokens: number;
-    route: "direct" | "openrouter";
-    resolvedModel?: string;
+  const assistantOverrides = extractGenerationOverrides(assistant.settingsJson);
+  const overrides: AssistantGenerationOverrides = {
+    temperature: assistantOverrides.temperature ?? agent.temperature ?? null,
+    maxTokens: assistantOverrides.maxTokens ?? agent.maxTokens ?? null,
+    topP: assistantOverrides.topP,
   };
+
+  const toolsConfig = extractAssistantTools(assistant.settingsJson);
+  const hasEnabledTools = resolveEnabledTools(toolsConfig).length > 0;
+  const toolRuntime: ToolRuntime | undefined = hasEnabledTools
+    ? {
+        config: toolsConfig,
+        execCtx: {
+          tenantId: input.tenantId,
+          assistantId: assistant.id,
+          assistantName: assistant.name,
+        },
+      }
+    : undefined;
+
+  let result: CompletionResult;
 
   if (shouldUseOpenRouter) {
     result = await completeWithOpenRouter(
@@ -423,6 +731,8 @@ export async function buildAssistantReply(input: {
       systemForModel,
       userTextWithAttachments,
       preparedAttachments,
+      overrides,
+      toolRuntime,
     );
   } else {
     switch (integration.provider) {
@@ -433,6 +743,8 @@ export async function buildAssistantReply(input: {
           systemForModel,
           userTextWithAttachments,
           preparedAttachments,
+          overrides,
+          toolRuntime,
         );
         break;
       case "ANTHROPIC":
@@ -442,6 +754,8 @@ export async function buildAssistantReply(input: {
           systemForModel,
           userTextWithAttachments,
           preparedAttachments,
+          overrides,
+          toolRuntime,
         );
         break;
       case "GEMINI":
@@ -451,6 +765,8 @@ export async function buildAssistantReply(input: {
           systemForModel,
           userTextWithAttachments,
           preparedAttachments,
+          overrides,
+          toolRuntime,
         );
         break;
       default:
@@ -459,6 +775,7 @@ export async function buildAssistantReply(input: {
           inputTokens: estimateTokens(userTextWithAttachments),
           outputTokens: estimateTokens(input.userText) + 12,
           route: "direct" as const,
+          toolEvents: [],
         };
     }
   }
@@ -471,6 +788,7 @@ export async function buildAssistantReply(input: {
     outputTokens: result.outputTokens,
     providerForUsage: shouldUseOpenRouter ? "OPENAI" : integration.provider,
     modelForUsage: result.resolvedModel ?? (shouldUseOpenRouter ? String(openRouterConfig.model || agent.model) : agent.model),
+    toolEvents: result.toolEvents,
   };
 }
 
@@ -540,6 +858,33 @@ export async function buildAssistantReplyForUserAssistant(input: {
   const baseSystem = personaDirectives ? `${baseSystemRaw}\n\n${personaDirectives}` : baseSystemRaw;
   const systemForModel = buildGroundedSystemPrompt(baseSystem, kbText, kbResolved.grounding);
 
+  const assistantOverrides = extractGenerationOverrides(assistant.settingsJson);
+  const agentOverrides = linkAgent
+    ? {
+        temperature: linkAgent.temperature ?? null,
+        maxTokens: linkAgent.maxTokens ?? null,
+        topP: null,
+      }
+    : { temperature: null, maxTokens: null, topP: null };
+  const overrides: AssistantGenerationOverrides = {
+    temperature: assistantOverrides.temperature ?? agentOverrides.temperature,
+    maxTokens: assistantOverrides.maxTokens ?? agentOverrides.maxTokens,
+    topP: assistantOverrides.topP ?? agentOverrides.topP,
+  };
+
+  const toolsConfig = extractAssistantTools(assistant.settingsJson);
+  const hasEnabledTools = resolveEnabledTools(toolsConfig).length > 0;
+  const toolRuntime: ToolRuntime | undefined = hasEnabledTools
+    ? {
+        config: toolsConfig,
+        execCtx: {
+          tenantId: input.tenantId,
+          assistantId: assistant.id,
+          assistantName: assistant.name,
+        },
+      }
+    : undefined;
+
   const preparedAttachments = await toAttachmentPayload(input.tenantId, input.attachments);
   const attachmentSummary = buildAttachmentSummary(preparedAttachments);
   const userTextWithAttachments =
@@ -547,13 +892,7 @@ export async function buildAssistantReplyForUserAssistant(input: {
       ? `${input.userText}\n\nВложения:\n${attachmentSummary}`
       : input.userText;
 
-  let result: {
-    text: string;
-    inputTokens: number;
-    outputTokens: number;
-    route: "direct" | "openrouter";
-    resolvedModel?: string;
-  };
+  let result: CompletionResult;
 
   if (shouldUseOpenRouter) {
     result = await completeWithOpenRouter(
@@ -562,17 +901,19 @@ export async function buildAssistantReplyForUserAssistant(input: {
       systemForModel,
       userTextWithAttachments,
       preparedAttachments,
+      overrides,
+      toolRuntime,
     );
   } else {
     switch (integration.provider) {
       case "OPENAI":
-        result = await completeWithOpenAi(directKey, model, systemForModel, userTextWithAttachments, preparedAttachments);
+        result = await completeWithOpenAi(directKey, model, systemForModel, userTextWithAttachments, preparedAttachments, overrides, toolRuntime);
         break;
       case "ANTHROPIC":
-        result = await completeWithAnthropic(directKey, model, systemForModel, userTextWithAttachments, preparedAttachments);
+        result = await completeWithAnthropic(directKey, model, systemForModel, userTextWithAttachments, preparedAttachments, overrides, toolRuntime);
         break;
       case "GEMINI":
-        result = await completeWithGemini(directKey, model, systemForModel, userTextWithAttachments, preparedAttachments);
+        result = await completeWithGemini(directKey, model, systemForModel, userTextWithAttachments, preparedAttachments, overrides, toolRuntime);
         break;
       default:
         result = {
@@ -580,6 +921,7 @@ export async function buildAssistantReplyForUserAssistant(input: {
           inputTokens: estimateTokens(userTextWithAttachments),
           outputTokens: estimateTokens(input.userText) + 12,
           route: "direct" as const,
+          toolEvents: [],
         };
     }
   }
@@ -592,5 +934,6 @@ export async function buildAssistantReplyForUserAssistant(input: {
     outputTokens: result.outputTokens,
     providerForUsage: shouldUseOpenRouter ? "OPENAI" : integration.provider,
     modelForUsage: result.resolvedModel ?? (shouldUseOpenRouter ? String(openRouterConfig.model || model) : model),
+    toolEvents: result.toolEvents,
   };
 }

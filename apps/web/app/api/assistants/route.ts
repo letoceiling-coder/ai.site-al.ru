@@ -6,12 +6,21 @@ import {
   ASSISTANT_TEMPLATES,
   DEFAULT_ASSISTANT_SETTINGS,
   extractAssistantSettings,
+  extractGenerationOverrides,
   getAssistantTemplate,
   mergeAssistantSettings,
+  mergeGenerationOverrides,
   normalizeAssistantSettings,
+  normalizeGenerationOverrides,
   settingsFromTemplate,
   type AssistantTemplate,
 } from "@/lib/assistant-settings";
+import {
+  BUILTIN_TOOLS,
+  extractAssistantTools,
+  mergeAssistantTools,
+  normalizeAssistantTools,
+} from "@/lib/assistant-tools";
 
 type AssistantStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
 
@@ -25,6 +34,8 @@ type CreatePayload = {
   model?: unknown;
   template?: unknown;
   persona?: unknown;
+  generation?: unknown;
+  tools?: unknown;
 };
 
 function isAssistantStatus(value: unknown): value is AssistantStatus {
@@ -134,6 +145,8 @@ export async function GET() {
   const assistantsWithPersona = assistants.map((item: (typeof assistants)[number]) => ({
     ...item,
     persona: extractAssistantSettings(item.settingsJson),
+    generation: extractGenerationOverrides(item.settingsJson),
+    tools: extractAssistantTools(item.settingsJson),
   }));
 
   return ok({
@@ -143,6 +156,11 @@ export async function GET() {
     agents,
     knowledgeBases,
     templates: ASSISTANT_TEMPLATES,
+    toolCatalog: BUILTIN_TOOLS.map((t) => ({
+      id: t.id,
+      title: t.title,
+      humanDescription: t.humanDescription,
+    })),
   });
 }
 
@@ -231,7 +249,15 @@ export async function POST(request: Request) {
     body.persona && typeof body.persona === "object" && !Array.isArray(body.persona)
       ? normalizeAssistantSettings({ ...personaBase, ...(body.persona as Record<string, unknown>) })
       : personaBase;
-  const settingsJson: Record<string, unknown> = mergeAssistantSettings({}, personaFromBody);
+  let settingsJson: Record<string, unknown> = mergeAssistantSettings({}, personaFromBody);
+  if (body.generation && typeof body.generation === "object" && !Array.isArray(body.generation)) {
+    const gen = normalizeGenerationOverrides(body.generation);
+    settingsJson = mergeGenerationOverrides(settingsJson, gen);
+  }
+  if (body.tools && typeof body.tools === "object" && !Array.isArray(body.tools)) {
+    const tools = normalizeAssistantTools(body.tools);
+    settingsJson = mergeAssistantTools(settingsJson, tools);
+  }
   if (resolved.useOpenRouter) {
     settingsJson.useOpenRouter = true;
   }

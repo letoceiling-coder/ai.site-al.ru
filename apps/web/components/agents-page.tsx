@@ -115,6 +115,9 @@ export function AgentsPageClient() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatFiles, setChatFiles] = useState<Array<{ name: string; url: string; mimeType: string; size: number }>>([]);
+  const [lastToolEvents, setLastToolEvents] = useState<
+    Array<{ toolName: string; status: string; summary: string }>
+  >([]);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [voiceBackend, setVoiceBackend] = useState<"browser" | "provider">("browser");
   const [voiceGender, setVoiceGender] = useState<"female" | "male">("female");
@@ -478,6 +481,7 @@ export function AgentsPageClient() {
     }
     setChatLoading(true);
     setChatError(null);
+    setLastToolEvents([]);
     const pendingText = chatInput.trim();
     const pendingFiles = [...chatFiles];
     try {
@@ -546,6 +550,9 @@ export function AgentsPageClient() {
             text?: string;
             dialogId?: string;
             message?: string;
+            toolName?: string;
+            status?: string;
+            summary?: string;
           };
           if (payload.type === "meta" && payload.dialogId) {
             setDialogId(payload.dialogId);
@@ -561,6 +568,15 @@ export function AgentsPageClient() {
                   : msg,
               ),
             );
+          } else if (payload.type === "tool" && payload.toolName) {
+            setLastToolEvents((prev) => [
+              ...prev,
+              {
+                toolName: payload.toolName ?? "",
+                status: payload.status ?? "",
+                summary: payload.summary ?? "",
+              },
+            ]);
           } else if (payload.type === "done") {
             finalAssistantText = payload.text ?? finalAssistantText;
           } else if (payload.type === "error") {
@@ -1061,6 +1077,22 @@ export function AgentsPageClient() {
                           </button>
                         </span>
                       ))}
+                    </div>
+                  ) : null}
+                  {lastToolEvents.length > 0 ? (
+                    <div className="chat-tool-events">
+                      <strong>Вызваны инструменты:</strong>
+                      <ul>
+                        {lastToolEvents.map((e, idx) => (
+                          <li key={`${e.toolName}-${idx}`}>
+                            <span className={`chat-tool-status chat-tool-${e.status.toLowerCase()}`}>
+                              {e.status === "COMPLETED" ? "✓" : "✕"}
+                            </span>{" "}
+                            <code>{e.toolName}</code>
+                            {e.summary ? <span> — {e.summary}</span> : null}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   ) : null}
                   {chatError ? <p style={{ color: "crimson" }}>{chatError}</p> : null}

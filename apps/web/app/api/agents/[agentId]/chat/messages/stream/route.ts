@@ -111,7 +111,7 @@ export async function POST(request: Request, context: Context) {
           await sleep(35);
         }
 
-        await prisma.message.create({
+        const assistantMessage = await prisma.message.create({
           data: {
             tenantId: auth.tenantId,
             dialogId,
@@ -122,6 +122,25 @@ export async function POST(request: Request, context: Context) {
             model: reply.modelForUsage,
           },
         });
+
+        for (const event of reply.toolEvents ?? []) {
+          await prisma.toolCall.create({
+            data: {
+              tenantId: auth.tenantId,
+              messageId: assistantMessage.id,
+              toolName: event.toolName,
+              status: event.status,
+              inputJson: event.inputJson as never,
+              outputJson: event.outputJson as never,
+            },
+          });
+          send({
+            type: "tool",
+            toolName: event.toolName,
+            status: event.status,
+            summary: event.resultText,
+          });
+        }
 
         await prisma.usageEvent.create({
           data: {
