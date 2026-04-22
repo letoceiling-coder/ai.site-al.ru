@@ -195,3 +195,99 @@ export async function closeHandoffDialog(
 export function isDialogTakenByOperator(metadata: unknown): boolean {
   return extractHandoff(metadata).state === "takenOver";
 }
+
+/* ---------------------------------------------------------------------
+ * Handoff между ассистентами (Фаза 11).
+ * Хранится в `Dialog.metadata.assistantRouting`.
+ * ------------------------------------------------------------------- */
+
+export type AssistantRoutingHop = {
+  fromAssistantId: string;
+  toAssistantId: string;
+  reason?: string;
+  summary?: string;
+  at: string;
+};
+
+export type AssistantRouting = {
+  activeAssistantId: string | null;
+  chain: AssistantRoutingHop[];
+};
+
+export const ASSISTANT_HANDOFF_MAX_HOPS = 5;
+
+export function extractAssistantRouting(metadata: unknown): AssistantRouting {
+  const empty: AssistantRouting = { activeAssistantId: null, chain: [] };
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return empty;
+  }
+  const m = metadata as Record<string, unknown>;
+  const raw = m.assistantRouting;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return empty;
+  }
+  const r = raw as Record<string, unknown>;
+  const activeAssistantId = typeof r.activeAssistantId === "string" ? r.activeAssistantId : null;
+  const chainRaw = Array.isArray(r.chain) ? r.chain : [];
+  const chain: AssistantRoutingHop[] = [];
+  for (const item of chainRaw) {
+    if (!item || typeof item !== "object") continue;
+    const v = item as Record<string, unknown>;
+    const from = typeof v.fromAssistantId === "string" ? v.fromAssistantId : "";
+    const to = typeof v.toAssistantId === "string" ? v.toAssistantId : "";
+    if (!from || !to) continue;
+    chain.push({
+      fromAssistantId: from,
+      toAssistantId: to,
+      reason: typeof v.reason === "string" ? v.reason : undefined,
+      summary: typeof v.summary === "string" ? v.summary : undefined,
+      at: typeof v.at === "string" ? v.at : new Date().toISOString(),
+    });
+  }
+  return { activeAssistantId, chain };
+}
+
+export async function markAssistantHandoff(
+  tenantId: string,
+  dialogId: string,
+  hop: { fromAssistantId: string; toAssistantId: string; reason?: string; summary?: string },
+): Promise<AssistantRouting | null> {
+  const dialog = await prisma.dialog.findFirst({
+    where: { id: dialogId, tenantId },
+    select: { id: true, metadata: true },
+  });
+  if (!dialog) return null;
+  const current = extractAssistantRouting(dialog.metadata);
+  if (current.chain.length >= ASSISTANT_HANDOFF_MAX_HOPS) {
+    return current;
+  }
+  const next: AssistantRouting = {
+    activeAssistantId: hop.toAssistantId,
+    chain: [
+      ...current.chain,
+      {
+        fromAssistantId: hop.fromAssistantId,
+        toAssistantId: hop.toAssistantId,
+        reason: hop.reason,
+        summary: hop.summary,
+        at: new Date().toISOString(),
+      },
+    ],
+  };
+  const baseMeta: Record<string, unknown> =
+    dialog.metadata && typeof dialog.metadata === "object" && !Array.isArray(dialog.metadata)
+      ? { ...(dialog.metadata as Record<string, unknown>) }
+      : {};
+  baseMeta.assistantRouting = next;
+  await prisma.dialog.update({
+    where: { id: dialogId },
+    data: { metadata: baseMeta as never },
+  });
+  return next;
+}
+
+/** Определить, какой ассистент сейчас ведёт диалог (активный или базовый). */
+export function resolveActiveAssistantId(metadata: unknown, baseAssistantId: string): string {
+  const routing = extractAssistantRouting(metadata);
+  return routing.activeAssistantId ?? baseAssistantId;
+}

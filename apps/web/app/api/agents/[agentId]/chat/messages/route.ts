@@ -93,18 +93,20 @@ export async function POST(request: Request, context: Context) {
         .slice(0, 10)
     : [];
 
+  const incomingDialogId = typeof body.dialogId === "string" ? body.dialogId.trim() : "";
   const reply = await buildAssistantReply({
     tenantId: auth.tenantId,
     userId: auth.userId,
     agentId,
     userText: text,
     attachments,
+    dialogId: incomingDialogId || undefined,
   }).catch((error) => {
     const message = error instanceof Error ? error.message : "Unknown error";
     throw new Error(message);
   });
 
-  let dialogId = typeof body.dialogId === "string" ? body.dialogId.trim() : "";
+  let dialogId = incomingDialogId;
   let dialog = dialogId
     ? await prisma.dialog.findFirst({
         where: {

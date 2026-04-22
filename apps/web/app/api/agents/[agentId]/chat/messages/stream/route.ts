@@ -111,6 +111,7 @@ export async function POST(request: Request, context: Context) {
     agentId,
     userText: text,
     attachments,
+    dialogId: preDialog?.id,
   }).catch((error) => {
     const message = error instanceof Error ? error.message : "Unknown error";
     throw new Error(message);
@@ -205,6 +206,17 @@ export async function POST(request: Request, context: Context) {
             status: event.status,
             summary: event.resultText,
           });
+          if (event.toolName === "handoff_to_assistant" && event.status === "COMPLETED") {
+            const out = (event.outputJson ?? {}) as {
+              targetAssistantId?: unknown;
+              targetAssistantName?: unknown;
+            };
+            send({
+              type: "handoff_assistant",
+              toAssistantId: typeof out.targetAssistantId === "string" ? out.targetAssistantId : null,
+              toAssistantName: typeof out.targetAssistantName === "string" ? out.targetAssistantName : null,
+            });
+          }
           if (event.toolName === "handoff_to_operator" && event.status === "COMPLETED") {
             const input = (event.inputJson ?? {}) as {
               reason?: unknown;

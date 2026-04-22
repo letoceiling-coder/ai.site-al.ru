@@ -15,8 +15,15 @@ import {
   toGeminiTools,
   toOpenAiTools,
   type AssistantToolsConfig,
+  type ResolveToolsContext,
 } from "@/lib/assistant-tools";
 import { executeAssistantTool, type ToolEvent, type ToolExecContext } from "@/lib/assistant-tool-exec";
+import {
+  buildHandoffTargetsDirective,
+  extractHandoffTargets,
+  type AssistantHandoffTarget,
+} from "@/lib/assistant-handoff-targets";
+import { extractAssistantRouting } from "@/lib/dialog-handoff";
 import { readFile } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import { decodeSecret } from "@/lib/integrations";
@@ -119,6 +126,7 @@ const TOOL_LOOP_MAX_ITERATIONS = 3;
 type ToolRuntime = {
   config: AssistantToolsConfig;
   execCtx: ToolExecContext;
+  resolveCtx?: ResolveToolsContext;
 };
 
 type CompletionResult = {
@@ -166,7 +174,7 @@ async function runOpenAiLikeLoop(
     { role: "system", content: systemPrompt },
     { role: "user", content: userContent },
   ];
-  const toolSpecs = tools ? toOpenAiTools(tools.config) : [];
+  const toolSpecs = tools ? toOpenAiTools(tools.config, tools.resolveCtx) : [];
   const toolEvents: ToolEvent[] = [];
   let totalInput = 0;
   let totalOutput = 0;
@@ -355,7 +363,7 @@ async function completeWithAnthropic(
   const messages: Array<{ role: "user" | "assistant"; content: AnthropicContentBlock[] }> = [
     { role: "user", content: initialUserContent },
   ];
-  const toolSpecs = tools ? toAnthropicTools(tools.config) : [];
+  const toolSpecs = tools ? toAnthropicTools(tools.config, tools.resolveCtx) : [];
   const toolEvents: ToolEvent[] = [];
   let totalInput = 0;
   let totalOutput = 0;
@@ -491,7 +499,7 @@ async function completeWithGemini(
   const contents: Array<{ role: "user" | "model"; parts: GeminiPart[] }> = [
     { role: "user", parts: initialParts },
   ];
-  const toolSpecs = tools ? toGeminiTools(tools.config) : [];
+  const toolSpecs = tools ? toGeminiTools(tools.config, tools.resolveCtx) : [];
   const toolEvents: ToolEvent[] = [];
   let totalInput = 0;
   let totalOutput = 0;
@@ -607,6 +615,40 @@ async function completeWithGemini(
   };
 }
 
+type ResolvedHandoffTarget = { assistantId: string; name: string; description?: string };
+
+async function resolveHandoffTargets(
+  tenantId: string,
+  configured: AssistantHandoffTarget[],
+  selfAssistantId: string,
+): Promise<ResolvedHandoffTarget[]> {
+  const ids = Array.from(
+    new Set(
+      configured
+        .map((t) => t.assistantId)
+        .filter((id) => id && id !== selfAssistantId),
+    ),
+  );
+  if (ids.length === 0) {
+    return [];
+  }
+  const rows = await prisma.assistant.findMany({
+    where: { id: { in: ids }, tenantId, deletedAt: null, status: "ACTIVE" },
+    select: { id: true, name: true },
+  });
+  const byId = new Map<string, string>();
+  for (const r of rows as Array<{ id: string; name: string }>) {
+    byId.set(r.id, r.name);
+  }
+  const out: ResolvedHandoffTarget[] = [];
+  for (const t of configured) {
+    const name = byId.get(t.assistantId);
+    if (!name) continue;
+    out.push({ assistantId: t.assistantId, name, description: t.description });
+  }
+  return out;
+}
+
 export async function ensureAssistantForAgent(tenantId: string, userId: string, agentId: string) {
   const agent = await prisma.agent.findFirst({
     where: { id: agentId, tenantId, deletedAt: null },
@@ -658,12 +700,33 @@ export async function buildAssistantReply(input: {
   agentId: string;
   userText: string;
   attachments: AttachmentRef[];
+  dialogId?: string;
 }) {
   const linked = await ensureAssistantForAgent(input.tenantId, input.userId, input.agentId);
   if (!linked) {
     throw new Error("AGENT_NOT_FOUND");
   }
-  const { agent, assistant } = linked;
+  const { agent } = linked;
+  let assistant = linked.assistant;
+
+  if (input.dialogId) {
+    const dialogForRouting = await prisma.dialog.findFirst({
+      where: { id: input.dialogId, tenantId: input.tenantId },
+      select: { metadata: true },
+    });
+    const activeId = dialogForRouting
+      ? extractAssistantRouting(dialogForRouting.metadata).activeAssistantId
+      : null;
+    if (activeId && activeId !== assistant.id) {
+      const overrideAssistant = await prisma.assistant.findFirst({
+        where: { id: activeId, tenantId: input.tenantId, deletedAt: null, status: "ACTIVE" },
+        include: { knowledgeLinks: { select: { knowledgeBaseId: true } } },
+      });
+      if (overrideAssistant) {
+        assistant = overrideAssistant;
+      }
+    }
+  }
   const integration = agent.providerIntegration;
   const directKey = decodeSecret(integration.encryptedSecret);
   const settings = await prisma.systemSetting.findFirst({
@@ -699,7 +762,13 @@ export async function buildAssistantReply(input: {
       : "";
   const persona = extractAssistantSettings(assistant.settingsJson);
   const personaDirectives = buildPersonaDirectives(persona);
-  const basePrompt = `You are agent "${agent.name}".${personaDirectives ? `\n\n${personaDirectives}` : ""}`;
+  const configuredHandoffs = extractHandoffTargets(assistant.settingsJson);
+  const resolvedHandoffs = await resolveHandoffTargets(input.tenantId, configuredHandoffs, assistant.id);
+  const handoffDirective = buildHandoffTargetsDirective(resolvedHandoffs);
+  const basePrompt =
+    `You are agent "${agent.name}".` +
+    (personaDirectives ? `\n\n${personaDirectives}` : "") +
+    (handoffDirective ? `\n\n${handoffDirective}` : "");
   const systemForModel = buildGroundedSystemPrompt(basePrompt, kbText, kbResolved.grounding);
 
   const assistantOverrides = extractGenerationOverrides(assistant.settingsJson);
@@ -710,7 +779,8 @@ export async function buildAssistantReply(input: {
   };
 
   const toolsConfig = extractAssistantTools(assistant.settingsJson);
-  const hasEnabledTools = resolveEnabledTools(toolsConfig).length > 0;
+  const resolveCtx: ResolveToolsContext = { handoffTargets: resolvedHandoffs };
+  const hasEnabledTools = resolveEnabledTools(toolsConfig, resolveCtx).length > 0;
   const toolRuntime: ToolRuntime | undefined = hasEnabledTools
     ? {
         config: toolsConfig,
@@ -718,8 +788,11 @@ export async function buildAssistantReply(input: {
           tenantId: input.tenantId,
           assistantId: assistant.id,
           assistantName: assistant.name,
+          dialogId: input.dialogId,
           knowledgeBaseIds: kbIds,
+          handoffTargets: resolvedHandoffs,
         },
+        resolveCtx,
       }
     : undefined;
 
@@ -801,6 +874,7 @@ export async function buildAssistantReplyForUserAssistant(input: {
   assistantId: string;
   userText: string;
   attachments: AttachmentRef[];
+  dialogId?: string;
 }) {
   const record = await prisma.assistant.findFirst({
     where: { id: input.assistantId, tenantId: input.tenantId, deletedAt: null },
@@ -855,8 +929,14 @@ export async function buildAssistantReplyForUserAssistant(input: {
   ).catch(() => "");
   const persona = extractAssistantSettings(assistant.settingsJson);
   const personaDirectives = buildPersonaDirectives(persona);
+  const configuredHandoffs = extractHandoffTargets(assistant.settingsJson);
+  const resolvedHandoffs = await resolveHandoffTargets(input.tenantId, configuredHandoffs, assistant.id);
+  const handoffDirective = buildHandoffTargetsDirective(resolvedHandoffs);
   const baseSystemRaw = assistant.systemPrompt.trim() || "You are a helpful assistant.";
-  const baseSystem = personaDirectives ? `${baseSystemRaw}\n\n${personaDirectives}` : baseSystemRaw;
+  const baseSystem =
+    baseSystemRaw +
+    (personaDirectives ? `\n\n${personaDirectives}` : "") +
+    (handoffDirective ? `\n\n${handoffDirective}` : "");
   const systemForModel = buildGroundedSystemPrompt(baseSystem, kbText, kbResolved.grounding);
 
   const assistantOverrides = extractGenerationOverrides(assistant.settingsJson);
@@ -874,7 +954,8 @@ export async function buildAssistantReplyForUserAssistant(input: {
   };
 
   const toolsConfig = extractAssistantTools(assistant.settingsJson);
-  const hasEnabledTools = resolveEnabledTools(toolsConfig).length > 0;
+  const resolveCtx: ResolveToolsContext = { handoffTargets: resolvedHandoffs };
+  const hasEnabledTools = resolveEnabledTools(toolsConfig, resolveCtx).length > 0;
   const toolRuntime: ToolRuntime | undefined = hasEnabledTools
     ? {
         config: toolsConfig,
@@ -882,8 +963,11 @@ export async function buildAssistantReplyForUserAssistant(input: {
           tenantId: input.tenantId,
           assistantId: assistant.id,
           assistantName: assistant.name,
+          dialogId: input.dialogId,
           knowledgeBaseIds: kbIds,
+          handoffTargets: resolvedHandoffs,
         },
+        resolveCtx,
       }
     : undefined;
 

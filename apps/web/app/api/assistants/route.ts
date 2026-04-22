@@ -21,6 +21,11 @@ import {
   mergeAssistantTools,
   normalizeAssistantTools,
 } from "@/lib/assistant-tools";
+import {
+  extractHandoffTargets,
+  mergeHandoffTargets,
+  normalizeHandoffTargets,
+} from "@/lib/assistant-handoff-targets";
 
 type AssistantStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
 
@@ -36,6 +41,7 @@ type CreatePayload = {
   persona?: unknown;
   generation?: unknown;
   tools?: unknown;
+  handoffTargets?: unknown;
 };
 
 function isAssistantStatus(value: unknown): value is AssistantStatus {
@@ -147,6 +153,7 @@ export async function GET() {
     persona: extractAssistantSettings(item.settingsJson),
     generation: extractGenerationOverrides(item.settingsJson),
     tools: extractAssistantTools(item.settingsJson),
+    handoffTargets: extractHandoffTargets(item.settingsJson),
   }));
 
   return ok({
@@ -257,6 +264,10 @@ export async function POST(request: Request) {
   if (body.tools && typeof body.tools === "object" && !Array.isArray(body.tools)) {
     const tools = normalizeAssistantTools(body.tools);
     settingsJson = mergeAssistantTools(settingsJson, tools);
+  }
+  if (body.handoffTargets !== undefined) {
+    const normalized = normalizeHandoffTargets(body.handoffTargets);
+    settingsJson = mergeHandoffTargets(settingsJson, normalized);
   }
   if (resolved.useOpenRouter) {
     settingsJson.useOpenRouter = true;

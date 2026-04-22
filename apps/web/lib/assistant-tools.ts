@@ -16,7 +16,8 @@ export type AssistantToolId =
   | "create_lead"
   | "handoff_to_operator"
   | "schedule_callback"
-  | "search_knowledge_base";
+  | "search_knowledge_base"
+  | "handoff_to_assistant";
 
 export type AssistantToolConfig = {
   enabled: boolean;
@@ -45,6 +46,7 @@ export const DEFAULT_ASSISTANT_TOOLS: AssistantToolsConfig = {
   handoff_to_operator: { ...DEFAULT_TOOL_CONFIG },
   schedule_callback: { ...DEFAULT_TOOL_CONFIG },
   search_knowledge_base: { ...DEFAULT_TOOL_CONFIG },
+  handoff_to_assistant: { ...DEFAULT_TOOL_CONFIG },
 };
 
 export type ToolParameterSchema = {
@@ -150,6 +152,35 @@ export const BUILTIN_TOOLS: AssistantToolDefinition[] = [
     },
   },
   {
+    id: "handoff_to_assistant",
+    title: "Передача другому ассистенту",
+    humanDescription:
+      "Ассистент передаёт диалог специализированному ассистенту (например, «Техподдержка» или «Продажи»). Работает, когда в списке «Передача специалистам» добавлены другие ассистенты.",
+    modelDescription:
+      "Передать диалог другому ассистенту-специалисту. Вызывай, когда вопрос явно относится к профилю одного " +
+      "из специалистов из списка «Доступные специалисты» в системном промпте. Перед вызовом коротко скажи пользователю, " +
+      "что передаёшь вопрос нужному специалисту. Обязательно укажи `targetAssistantId` из списка и передай краткое " +
+      "`summary` диалога для контекста.",
+    parameters: {
+      type: "object",
+      properties: {
+        targetAssistantId: {
+          type: "string",
+          description: "Идентификатор целевого ассистента из списка «Доступные специалисты».",
+        },
+        reason: {
+          type: "string",
+          description: "Короткое объяснение, почему передаём именно этому специалисту.",
+        },
+        summary: {
+          type: "string",
+          description: "Сводка диалога на 2-4 предложения, чтобы специалист быстро включился в контекст.",
+        },
+      },
+      required: ["targetAssistantId"],
+    },
+  },
+  {
     id: "schedule_callback",
     title: "Запрос обратного звонка",
     humanDescription:
@@ -200,6 +231,7 @@ export function normalizeAssistantTools(raw: unknown): AssistantToolsConfig {
     handoff_to_operator: normalizeOneTool(source.handoff_to_operator),
     schedule_callback: normalizeOneTool(source.schedule_callback),
     search_knowledge_base: normalizeOneTool(source.search_knowledge_base),
+    handoff_to_assistant: normalizeOneTool(source.handoff_to_assistant),
   };
 }
 
@@ -225,23 +257,68 @@ export function mergeAssistantTools(
     handoff_to_operator: { ...current.handoff_to_operator, ...(incoming.handoff_to_operator ?? {}) },
     schedule_callback: { ...current.schedule_callback, ...(incoming.schedule_callback ?? {}) },
     search_knowledge_base: { ...current.search_knowledge_base, ...(incoming.search_knowledge_base ?? {}) },
+    handoff_to_assistant: { ...current.handoff_to_assistant, ...(incoming.handoff_to_assistant ?? {}) },
   };
   base.tools = normalizeAssistantTools(merged);
   return base;
 }
 
+export type ResolveToolsContext = {
+  /** Список allowed target assistants — для динамического enum в handoff_to_assistant. */
+  handoffTargets?: Array<{ assistantId: string; name: string; description?: string }>;
+};
+
+/** Применить контекст к определению tool'а (динамический enum, расширенное описание и т. д.). */
+function applyContextToDefinition(
+  def: AssistantToolDefinition,
+  ctx: ResolveToolsContext | undefined,
+): AssistantToolDefinition {
+  if (def.id !== "handoff_to_assistant") {
+    return def;
+  }
+  const targets = ctx?.handoffTargets ?? [];
+  if (targets.length === 0) {
+    return def;
+  }
+  const enumIds = targets.map((t) => t.assistantId);
+  const lines = targets
+    .map((t) => `  - ${t.assistantId}: «${t.name}»${t.description ? ` — ${t.description}` : ""}`)
+    .join("\n");
+  const enrichedParams: ToolParameterSchema = {
+    ...def.parameters,
+    properties: {
+      ...def.parameters.properties,
+      targetAssistantId: {
+        ...def.parameters.properties.targetAssistantId,
+        description:
+          (def.parameters.properties.targetAssistantId?.description ?? "") +
+          `\nВыбирай строго из enum; соответствие id → имя/профиль:\n${lines}`,
+        enum: enumIds,
+      },
+    },
+  };
+  return { ...def, parameters: enrichedParams };
+}
+
 /** Список активных инструментов с мержем базового описания и кастомных инструкций пользователя. */
-export function resolveEnabledTools(config: AssistantToolsConfig): Array<{
+export function resolveEnabledTools(
+  config: AssistantToolsConfig,
+  ctx?: ResolveToolsContext,
+): Array<{
   definition: AssistantToolDefinition;
   config: AssistantToolConfig;
   description: string;
 }> {
   const out: Array<{ definition: AssistantToolDefinition; config: AssistantToolConfig; description: string }> = [];
-  for (const def of BUILTIN_TOOLS) {
-    const cfg = config[def.id];
+  for (const rawDef of BUILTIN_TOOLS) {
+    const cfg = config[rawDef.id];
     if (!cfg?.enabled) {
       continue;
     }
+    if (rawDef.id === "handoff_to_assistant" && (ctx?.handoffTargets?.length ?? 0) === 0) {
+      continue;
+    }
+    const def = applyContextToDefinition(rawDef, ctx);
     const description = cfg.instructions
       ? `${def.modelDescription}\n\nПользовательские инструкции: ${cfg.instructions}`
       : def.modelDescription;
@@ -256,8 +333,8 @@ export function resolveEnabledTools(config: AssistantToolsConfig): Array<{
 
 type ProviderTool = Record<string, unknown>;
 
-export function toOpenAiTools(config: AssistantToolsConfig): ProviderTool[] {
-  return resolveEnabledTools(config).map(({ definition, description }) => ({
+export function toOpenAiTools(config: AssistantToolsConfig, ctx?: ResolveToolsContext): ProviderTool[] {
+  return resolveEnabledTools(config, ctx).map(({ definition, description }) => ({
     type: "function",
     function: {
       name: definition.id,
@@ -267,16 +344,16 @@ export function toOpenAiTools(config: AssistantToolsConfig): ProviderTool[] {
   }));
 }
 
-export function toAnthropicTools(config: AssistantToolsConfig): ProviderTool[] {
-  return resolveEnabledTools(config).map(({ definition, description }) => ({
+export function toAnthropicTools(config: AssistantToolsConfig, ctx?: ResolveToolsContext): ProviderTool[] {
+  return resolveEnabledTools(config, ctx).map(({ definition, description }) => ({
     name: definition.id,
     description,
     input_schema: definition.parameters,
   }));
 }
 
-export function toGeminiTools(config: AssistantToolsConfig): ProviderTool[] {
-  const enabled = resolveEnabledTools(config);
+export function toGeminiTools(config: AssistantToolsConfig, ctx?: ResolveToolsContext): ProviderTool[] {
+  const enabled = resolveEnabledTools(config, ctx);
   if (enabled.length === 0) {
     return [];
   }

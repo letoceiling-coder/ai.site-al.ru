@@ -9,6 +9,7 @@ import {
   normalizeGenerationOverrides,
 } from "@/lib/assistant-settings";
 import { mergeAssistantTools, normalizeAssistantTools } from "@/lib/assistant-tools";
+import { mergeHandoffTargets, normalizeHandoffTargets } from "@/lib/assistant-handoff-targets";
 
 type Context = { params: Promise<{ assistantId: string }> };
 type AssistantStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
@@ -24,6 +25,7 @@ type UpdatePayload = {
   persona?: unknown;
   generation?: unknown;
   tools?: unknown;
+  handoffTargets?: unknown;
 };
 
 function isAssistantStatus(value: unknown): value is AssistantStatus {
@@ -239,6 +241,12 @@ export async function PUT(request: Request, context: Context) {
       ? normalizeAssistantTools(body.tools)
       : normalizeAssistantTools({});
     data.settingsJson = mergeAssistantTools(current, toolsPayload);
+  }
+
+  if (body.handoffTargets !== undefined) {
+    const current = (data.settingsJson ?? currentSettings) as Record<string, unknown>;
+    const targets = normalizeHandoffTargets(body.handoffTargets);
+    data.settingsJson = mergeHandoffTargets(current, targets);
   }
 
   const kbIds = parseKnowledgeBaseIds(body.knowledgeBaseIds);

@@ -2,7 +2,11 @@ import { prisma } from "@ai/db";
 import { fail } from "@/lib/http";
 import { getAuthContext } from "@/lib/auth-context";
 import { buildAssistantReplyForUserAssistant, buildMessageContent } from "@/lib/agent-chat";
-import { extractHandoff, markDialogQueuedForOperator } from "@/lib/dialog-handoff";
+import {
+  extractHandoff,
+  markDialogQueuedForOperator,
+  resolveActiveAssistantId,
+} from "@/lib/dialog-handoff";
 import { publishOperatorEvent } from "@/lib/operator-events";
 
 type Context = { params: Promise<{ assistantId: string }> };
@@ -104,11 +108,13 @@ export async function POST(request: Request, context: Context) {
     });
   }
 
+  const activeAssistantId = resolveActiveAssistantId(dialog.metadata, assistantRow.id);
   const reply = await buildAssistantReplyForUserAssistant({
     tenantId: auth.tenantId,
-    assistantId,
+    assistantId: activeAssistantId,
     userText: text,
     attachments,
+    dialogId,
   }).catch((e) => {
     throw e instanceof Error ? e : new Error("Reply failed");
   });
@@ -170,6 +176,17 @@ export async function POST(request: Request, context: Context) {
             status: event.status,
             summary: event.resultText,
           });
+          if (event.toolName === "handoff_to_assistant" && event.status === "COMPLETED") {
+            const out = (event.outputJson ?? {}) as {
+              targetAssistantId?: unknown;
+              targetAssistantName?: unknown;
+            };
+            send({
+              type: "handoff_assistant",
+              toAssistantId: typeof out.targetAssistantId === "string" ? out.targetAssistantId : null,
+              toAssistantName: typeof out.targetAssistantName === "string" ? out.targetAssistantName : null,
+            });
+          }
           if (event.toolName === "handoff_to_operator" && event.status === "COMPLETED") {
             const input = (event.inputJson ?? {}) as {
               reason?: unknown;

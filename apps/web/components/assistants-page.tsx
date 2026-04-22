@@ -47,6 +47,7 @@ type AssistantRow = {
   persona?: AssistantPersonaSettings | null;
   generation?: AssistantGenerationOverrides | null;
   tools?: AssistantToolsConfig | null;
+  handoffTargets?: Array<{ assistantId: string; description: string }> | null;
   providerIntegration: { id: string; provider: string; displayName: string; status: string };
   agent: { id: string; name: string; model: string; status: string } | null;
   knowledgeLinks: { knowledgeBaseId: string }[];
@@ -84,7 +85,9 @@ const emptyDraft = {
     handoff_to_operator: { ...DEFAULT_ASSISTANT_TOOLS.handoff_to_operator },
     schedule_callback: { ...DEFAULT_ASSISTANT_TOOLS.schedule_callback },
     search_knowledge_base: { ...DEFAULT_ASSISTANT_TOOLS.search_knowledge_base },
+    handoff_to_assistant: { ...DEFAULT_ASSISTANT_TOOLS.handoff_to_assistant },
   } as AssistantToolsConfig,
+  handoffTargets: [] as Array<{ assistantId: string; description: string }>,
 };
 
 function normalizeModel(nextModel: string, models: string[]) {
@@ -262,7 +265,24 @@ export function AssistantsPageClient() {
           ...DEFAULT_ASSISTANT_TOOLS.search_knowledge_base,
           ...(item.tools?.search_knowledge_base ?? {}),
         },
+        handoff_to_assistant: {
+          ...DEFAULT_ASSISTANT_TOOLS.handoff_to_assistant,
+          ...(item.tools?.handoff_to_assistant ?? {}),
+        },
       };
+      const handoffTargetsFromItem: Array<{ assistantId: string; description: string }> = Array.isArray(
+        item.handoffTargets,
+      )
+        ? item.handoffTargets
+            .filter((x) => Boolean(x && typeof (x as { assistantId?: unknown }).assistantId === "string"))
+            .map((x) => ({
+              assistantId: String((x as { assistantId: string }).assistantId),
+              description:
+                typeof (x as { description?: unknown }).description === "string"
+                  ? String((x as { description: string }).description)
+                  : "",
+            }))
+        : [];
       setDraft({
         name: item.name,
         systemPrompt: item.systemPrompt,
@@ -275,6 +295,7 @@ export function AssistantsPageClient() {
         persona: personaFromItem,
         generation: generationFromItem,
         tools: toolsFromItem,
+        handoffTargets: handoffTargetsFromItem,
       });
       setPersonaOpen(true);
       const anyToolEnabled = (Object.values(toolsFromItem) as { enabled?: boolean }[]).some(
@@ -329,7 +350,9 @@ export function AssistantsPageClient() {
         handoff_to_operator: { ...DEFAULT_ASSISTANT_TOOLS.handoff_to_operator },
         schedule_callback: { ...DEFAULT_ASSISTANT_TOOLS.schedule_callback },
         search_knowledge_base: { ...DEFAULT_ASSISTANT_TOOLS.search_knowledge_base },
+        handoff_to_assistant: { ...DEFAULT_ASSISTANT_TOOLS.handoff_to_assistant },
       },
+      handoffTargets: [],
     });
   }
 
@@ -509,6 +532,7 @@ export function AssistantsPageClient() {
       persona: draft.persona,
       generation: draft.generation,
       tools: draft.tools,
+      handoffTargets: draft.handoffTargets,
     };
     if (linked) {
       payload.providerIntegrationId = "";
@@ -1089,7 +1113,7 @@ export function AssistantsPageClient() {
                           </p>
                           {cfg.enabled ? (
                             <div className="assistant-tool-fields">
-                              {tool.id !== "search_knowledge_base" ? (
+                              {tool.id !== "search_knowledge_base" && tool.id !== "handoff_to_assistant" ? (
                                 <>
                                   <label>
                                     Webhook URL (необязательно)
@@ -1121,10 +1145,109 @@ export function AssistantsPageClient() {
                                   placeholder={
                                     tool.id === "search_knowledge_base"
                                       ? "Например: перед ответом всегда ищи в базе знаний, если вопрос не из системного промпта."
-                                      : "Например: вызывай только если пользователь явно просит перезвонить и назвал телефон."
+                                      : tool.id === "handoff_to_assistant"
+                                        ? "Например: передавай, если вопрос про техническую диагностику; при передаче — краткое summary контекста."
+                                        : "Например: вызывай только если пользователь явно просит перезвонить и назвал телефон."
                                   }
                                 />
                               </label>
+                              {tool.id === "handoff_to_assistant" ? (
+                                <div className="assistant-handoff-targets">
+                                  <div className="assistants-hint" style={{ marginBottom: 6 }}>
+                                    Список специалистов, которым этот ассистент может передавать диалог.
+                                    Пустой список — tool будет недоступен модели.
+                                  </div>
+                                  {items
+                                    .filter((a) => a.id !== editingId && a.status === "ACTIVE")
+                                    .map((other) => {
+                                      const selected = draft.handoffTargets.find(
+                                        (t) => t.assistantId === other.id,
+                                      );
+                                      return (
+                                        <div
+                                          key={other.id}
+                                          className="assistant-handoff-target-row"
+                                          style={{
+                                            display: "flex",
+                                            gap: 8,
+                                            alignItems: "flex-start",
+                                            padding: "6px 0",
+                                            borderBottom: "1px dashed var(--border, #ddd)",
+                                          }}
+                                        >
+                                          <label
+                                            style={{
+                                              display: "flex",
+                                              gap: 6,
+                                              alignItems: "center",
+                                              minWidth: 240,
+                                            }}
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={Boolean(selected)}
+                                              onChange={(e) => {
+                                                setDraft((d) => {
+                                                  if (e.target.checked) {
+                                                    if (d.handoffTargets.some((t) => t.assistantId === other.id)) {
+                                                      return d;
+                                                    }
+                                                    return {
+                                                      ...d,
+                                                      handoffTargets: [
+                                                        ...d.handoffTargets,
+                                                        { assistantId: other.id, description: "" },
+                                                      ],
+                                                    };
+                                                  }
+                                                  return {
+                                                    ...d,
+                                                    handoffTargets: d.handoffTargets.filter(
+                                                      (t) => t.assistantId !== other.id,
+                                                    ),
+                                                  };
+                                                });
+                                              }}
+                                            />
+                                            <span>
+                                              <strong>{other.name}</strong>
+                                              <span
+                                                style={{ color: "var(--muted, #888)", marginLeft: 6, fontSize: 12 }}
+                                              >
+                                                {other.agent?.name ?? "без агента"}
+                                              </span>
+                                            </span>
+                                          </label>
+                                          {selected ? (
+                                            <input
+                                              type="text"
+                                              value={selected.description}
+                                              placeholder="Когда передавать (для модели)"
+                                              maxLength={240}
+                                              onChange={(e) => {
+                                                const val = e.target.value;
+                                                setDraft((d) => ({
+                                                  ...d,
+                                                  handoffTargets: d.handoffTargets.map((t) =>
+                                                    t.assistantId === other.id
+                                                      ? { ...t, description: val }
+                                                      : t,
+                                                  ),
+                                                }));
+                                              }}
+                                              style={{ flex: 1 }}
+                                            />
+                                          ) : null}
+                                        </div>
+                                      );
+                                    })}
+                                  {items.filter((a) => a.id !== editingId && a.status === "ACTIVE").length === 0 ? (
+                                    <div className="assistants-hint">
+                                      Нет других активных ассистентов — создай хотя бы одного специалиста.
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
                             </div>
                           ) : null}
                         </div>

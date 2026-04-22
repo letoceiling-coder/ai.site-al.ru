@@ -1,6 +1,7 @@
 import { prisma } from "@ai/db";
 import { BUILTIN_TOOLS, type AssistantToolId, type AssistantToolConfig } from "@/lib/assistant-tools";
 import { searchKnowledgeForTool } from "@/lib/knowledge-context";
+import { markAssistantHandoff } from "@/lib/dialog-handoff";
 
 export type ToolEvent = {
   toolName: AssistantToolId;
@@ -18,6 +19,8 @@ export type ToolExecContext = {
   dialogId?: string;
   /** Подключённые к ассистенту базы знаний (для search_knowledge_base). */
   knowledgeBaseIds?: string[];
+  /** Разрешённые цели для handoff_to_assistant (id → name/description). */
+  handoffTargets?: Array<{ assistantId: string; name: string; description?: string }>;
 };
 
 function stringOrEmpty(v: unknown): string {
@@ -401,6 +404,97 @@ async function execSearchKnowledgeBase(
   };
 }
 
+/** handoff_to_assistant: переключить активного ассистента в Dialog.metadata.assistantRouting. */
+async function execHandoffToAssistant(
+  args: Record<string, unknown>,
+  _config: AssistantToolConfig,
+  ctx: ToolExecContext,
+): Promise<ToolEvent> {
+  const targetAssistantId = stringOrEmpty(args.targetAssistantId);
+  const reason = stringOrEmpty(args.reason).slice(0, 1000);
+  const summary = stringOrEmpty(args.summary).slice(0, 2000);
+
+  if (!targetAssistantId) {
+    return {
+      toolName: "handoff_to_assistant",
+      inputJson: args,
+      outputJson: { ok: false, error: "targetAssistantId_required" },
+      resultText: "Не удалось передать диалог: не указан id целевого ассистента.",
+      status: "FAILED",
+    };
+  }
+  const allowed = ctx.handoffTargets ?? [];
+  const target = allowed.find((t) => t.assistantId === targetAssistantId);
+  if (!target) {
+    return {
+      toolName: "handoff_to_assistant",
+      inputJson: args,
+      outputJson: {
+        ok: false,
+        error: "target_not_allowed",
+        allowed: allowed.map((t) => t.assistantId),
+      },
+      resultText:
+        "Целевой ассистент не разрешён для передачи. Выбери id строго из enum targetAssistantId " +
+        "или продолжай отвечать сам.",
+      status: "FAILED",
+    };
+  }
+  if (target.assistantId === ctx.assistantId) {
+    return {
+      toolName: "handoff_to_assistant",
+      inputJson: args,
+      outputJson: { ok: false, error: "self_handoff" },
+      resultText: "Нельзя передать диалог самому себе. Отвечай сам или выбери другого ассистента.",
+      status: "FAILED",
+    };
+  }
+  if (!ctx.dialogId) {
+    return {
+      toolName: "handoff_to_assistant",
+      inputJson: args,
+      outputJson: { ok: false, error: "dialog_required" },
+      resultText: "Передача возможна только внутри диалога.",
+      status: "FAILED",
+    };
+  }
+
+  const routing = await markAssistantHandoff(ctx.tenantId, ctx.dialogId, {
+    fromAssistantId: ctx.assistantId,
+    toAssistantId: target.assistantId,
+    reason: reason || undefined,
+    summary: summary || undefined,
+  });
+
+  if (!routing) {
+    return {
+      toolName: "handoff_to_assistant",
+      inputJson: args,
+      outputJson: { ok: false, error: "dialog_not_found" },
+      resultText: "Не удалось передать диалог: диалог не найден.",
+      status: "FAILED",
+    };
+  }
+
+  return {
+    toolName: "handoff_to_assistant",
+    inputJson: args,
+    outputJson: {
+      ok: true,
+      targetAssistantId: target.assistantId,
+      targetAssistantName: target.name,
+      reason: reason || null,
+      summary: summary || null,
+      chainLength: routing.chain.length,
+    },
+    resultText:
+      `Диалог передан ассистенту «${target.name}» (id=${target.assistantId}). ` +
+      "Следующее сообщение пользователя будет отвечать уже этот ассистент. " +
+      "Коротко завершай свою реплику и не дублируй её содержимое.",
+    status: "COMPLETED",
+  };
+}
+
 export async function executeAssistantTool(
   name: string,
   args: Record<string, unknown>,
@@ -435,6 +529,8 @@ export async function executeAssistantTool(
       return execScheduleCallback(args, config, ctx);
     case "search_knowledge_base":
       return execSearchKnowledgeBase(args, config, ctx);
+    case "handoff_to_assistant":
+      return execHandoffToAssistant(args, config, ctx);
     default:
       return {
         toolName: name as AssistantToolId,
