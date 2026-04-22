@@ -2,6 +2,7 @@ import { prisma } from "@ai/db";
 import { buildKnowledgeContextForBases } from "@/lib/knowledge-context";
 import { buildGroundedSystemPrompt } from "@/lib/knowledge-grounding";
 import { resolveMaxContextCharsForBases } from "@/lib/knowledge-settings";
+import { computeEffectiveRagMaxChars, resolveModelProfile } from "@/lib/model-catalog";
 import {
   buildPersonaDirectives,
   extractAssistantSettings,
@@ -763,14 +764,27 @@ export async function buildAssistantReply(input: {
       ? `${input.userText}\n\nВложения:\n${attachmentSummary}`
       : input.userText;
 
+  // Модель выбираем заранее, чтобы применить её бюджет к RAG-контексту (A8).
+  const effectiveModelForBudget = shouldUseOpenRouter
+    ? String(openRouterConfig.model || agent.model)
+    : agent.model;
+  const modelProfile = resolveModelProfile(effectiveModelForBudget);
+  const assistantOverridesEarly = extractGenerationOverrides(assistant.settingsJson);
+
   const kbIds = assistant.knowledgeLinks.map((l: { knowledgeBaseId: string }) => l.knowledgeBaseId);
   const kbResolved =
     kbIds.length > 0
       ? await resolveMaxContextCharsForBases(input.tenantId, kbIds)
-      : { maxChars: 12_000, grounding: "strict" as const };
+      : { maxChars: modelProfile.maxContextChars, grounding: "strict" as const };
+  // Бюджет RAG: min(база, профиль модели) и опц. ручной потолок в настройках ассистента (A8).
+  const effectiveMaxChars = computeEffectiveRagMaxChars(
+    kbResolved.maxChars,
+    modelProfile,
+    assistantOverridesEarly.ragMaxContextChars,
+  );
   const kbCtx =
     kbIds.length > 0
-      ? await buildKnowledgeContextForBases(input.tenantId, kbIds, input.userText, kbResolved.maxChars).catch(() => ({
+      ? await buildKnowledgeContextForBases(input.tenantId, kbIds, input.userText, effectiveMaxChars).catch(() => ({
           text: "",
           citations: [],
           hasCitations: false,
@@ -787,11 +801,13 @@ export async function buildAssistantReply(input: {
     (handoffDirective ? `\n\n${handoffDirective}` : "");
   const systemForModel = buildGroundedSystemPrompt(basePrompt, kbCtx.text, kbResolved.grounding, kbCtx.hasCitations);
 
-  const assistantOverrides = extractGenerationOverrides(assistant.settingsJson);
+  // Temperature: явные настройки ассистента → агента → дефолт по профилю модели (A8).
   const overrides: AssistantGenerationOverrides = {
-    temperature: assistantOverrides.temperature ?? agent.temperature ?? null,
-    maxTokens: assistantOverrides.maxTokens ?? agent.maxTokens ?? null,
-    topP: assistantOverrides.topP,
+    temperature:
+      assistantOverridesEarly.temperature ?? agent.temperature ?? modelProfile.defaultTemperature,
+    maxTokens: assistantOverridesEarly.maxTokens ?? agent.maxTokens ?? null,
+    topP: assistantOverridesEarly.topP,
+    ragMaxContextChars: assistantOverridesEarly.ragMaxContextChars,
   };
 
   const toolsConfig = extractAssistantTools(assistant.settingsJson);
@@ -934,18 +950,30 @@ export async function buildAssistantReplyForUserAssistant(input: {
   );
 
   const model = resolvedModelFromAgent || resolvedModelFromSettings || String(openRouterConfig.model || "gpt-4.1-mini");
+  // Профиль модели — для бюджета RAG-контекста и дефолтной температуры (A8).
+  const effectiveModelForBudget = shouldUseOpenRouter
+    ? String(openRouterConfig.model || model)
+    : model;
+  const modelProfile = resolveModelProfile(effectiveModelForBudget);
+  const assistantOverridesEarly = extractGenerationOverrides(assistant.settingsJson);
+
   const kbIds = assistant.knowledgeLinks.map((l: { knowledgeBaseId: string }) => l.knowledgeBaseId);
   const kbResolved =
     kbIds.length > 0
       ? await resolveMaxContextCharsForBases(input.tenantId, kbIds)
-      : { maxChars: 12_000, grounding: "strict" as const };
+      : { maxChars: modelProfile.maxContextChars, grounding: "strict" as const };
+  const effectiveMaxChars = computeEffectiveRagMaxChars(
+    kbResolved.maxChars,
+    modelProfile,
+    assistantOverridesEarly.ragMaxContextChars,
+  );
   const kbCtx =
     kbIds.length > 0
       ? await buildKnowledgeContextForBases(
           input.tenantId,
           kbIds,
           input.userText,
-          kbResolved.maxChars,
+          effectiveMaxChars,
         ).catch(() => ({ text: "", citations: [], hasCitations: false }))
       : { text: "", citations: [], hasCitations: false };
   const persona = extractAssistantSettings(assistant.settingsJson);
@@ -960,7 +988,6 @@ export async function buildAssistantReplyForUserAssistant(input: {
     (handoffDirective ? `\n\n${handoffDirective}` : "");
   const systemForModel = buildGroundedSystemPrompt(baseSystem, kbCtx.text, kbResolved.grounding, kbCtx.hasCitations);
 
-  const assistantOverrides = extractGenerationOverrides(assistant.settingsJson);
   const agentOverrides = linkAgent
     ? {
         temperature: linkAgent.temperature ?? null,
@@ -969,9 +996,12 @@ export async function buildAssistantReplyForUserAssistant(input: {
       }
     : { temperature: null, maxTokens: null, topP: null };
   const overrides: AssistantGenerationOverrides = {
-    temperature: assistantOverrides.temperature ?? agentOverrides.temperature,
-    maxTokens: assistantOverrides.maxTokens ?? agentOverrides.maxTokens,
-    topP: assistantOverrides.topP ?? agentOverrides.topP,
+    // A8: если ни ассистент, ни связанный агент температуру не задали — берём дефолт из профиля модели.
+    temperature:
+      assistantOverridesEarly.temperature ?? agentOverrides.temperature ?? modelProfile.defaultTemperature,
+    maxTokens: assistantOverridesEarly.maxTokens ?? agentOverrides.maxTokens,
+    topP: assistantOverridesEarly.topP ?? agentOverrides.topP,
+    ragMaxContextChars: assistantOverridesEarly.ragMaxContextChars,
   };
 
   const toolsConfig = extractAssistantTools(assistant.settingsJson);

@@ -11,12 +11,18 @@ export type AssistantGenerationOverrides = {
   maxTokens: number | null;
   /** null = дефолт (1.0) */
   topP: number | null;
+  /**
+   * Дополнительный потолок символов RAG-контекста (внутри min(база знаний, профиль модели)).
+   * null = не сужать (только каталог модели + настройки баз).
+   */
+  ragMaxContextChars: number | null;
 };
 
 export const DEFAULT_ASSISTANT_GENERATION: AssistantGenerationOverrides = {
   temperature: null,
   maxTokens: null,
   topP: null,
+  ragMaxContextChars: null,
 };
 
 function clamp(value: number, min: number, max: number) {
@@ -44,6 +50,7 @@ export function normalizeGenerationOverrides(raw: unknown): AssistantGenerationO
     temperature: parseNumberOrNull(v.temperature, 0, 2),
     maxTokens: parseNumberOrNull(v.maxTokens, 1, 8192, true),
     topP: parseNumberOrNull(v.topP, 0, 1),
+    ragMaxContextChars: parseNumberOrNull(v.ragMaxContextChars, 2000, 40_000, true),
   };
 }
 
@@ -56,6 +63,7 @@ export function extractGenerationOverrides(settingsJson: unknown): AssistantGene
     temperature: parseNumberOrNull(v.temperature, 0, 2),
     maxTokens: parseNumberOrNull(v.maxTokens, 1, 8192, true),
     topP: parseNumberOrNull(v.topP, 0, 1),
+    ragMaxContextChars: parseNumberOrNull(v.ragMaxContextChars, 2000, 40_000, true),
   };
 }
 
@@ -72,6 +80,7 @@ export function mergeGenerationOverrides(
   base.temperature = merged.temperature;
   base.maxTokens = merged.maxTokens;
   base.topP = merged.topP;
+  base.ragMaxContextChars = merged.ragMaxContextChars;
   return base;
 }
 

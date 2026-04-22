@@ -16,6 +16,7 @@ import {
   type AssistantToolId,
   type AssistantToolsConfig,
 } from "@/lib/assistant-tools";
+import { resolveModelProfile } from "@/lib/model-catalog";
 
 type IntegrationOption = { id: string; provider: string; displayName: string; status: string };
 type AgentOption = { id: string; name: string; model: string };
@@ -496,6 +497,19 @@ export function AssistantsPageClient() {
     [items, activeAssistantId],
   );
 
+  const modelForProfileHint = useMemo(() => {
+    const linked = draft.agentId.trim();
+    if (linked) {
+      return agents.find((a) => a.id === linked)?.model?.trim() ?? "";
+    }
+    return draft.model.trim();
+  }, [draft.agentId, draft.model, agents]);
+
+  const ragModelProfile = useMemo(
+    () => resolveModelProfile(modelForProfileHint || "gpt-4.1-mini"),
+    [modelForProfileHint],
+  );
+
   function toggleKnowledge(id: string) {
     setDraft((prev) => {
       const set = new Set(prev.knowledgeBaseIds);
@@ -851,13 +865,16 @@ export function AssistantsPageClient() {
             {personaOpen ? (
               <div className="assistant-persona-grid">
                 <label className="assistant-persona-role">
-                  Температура {draft.generation.temperature ?? "0.7"}
+                  Температура{" "}
+                  {draft.generation.temperature == null
+                    ? `по модели (${ragModelProfile.defaultTemperature})`
+                    : draft.generation.temperature}
                   <input
                     type="range"
                     min={0}
                     max={2}
                     step={0.05}
-                    value={draft.generation.temperature ?? 0.7}
+                    value={draft.generation.temperature ?? ragModelProfile.defaultTemperature}
                     onChange={(e) =>
                       setDraft((d) => ({
                         ...d,
@@ -865,7 +882,10 @@ export function AssistantsPageClient() {
                       }))
                     }
                   />
-                  <small className="assistants-hint">0 — строго и предсказуемо, 1+ — креативнее и свободнее.</small>
+                  <small className="assistants-hint">
+                    0 — строго; выше — свободнее. Пустое в БД = дефолт из каталога для выбранной модели (
+                    {ragModelProfile.defaultTemperature}).
+                  </small>
                 </label>
                 <label>
                   Max tokens
@@ -908,6 +928,34 @@ export function AssistantsPageClient() {
                     }}
                     placeholder="Авто (1.0)"
                   />
+                </label>
+
+                <label>
+                  Потолок RAG (символов), опционально
+                  <input
+                    type="number"
+                    min={2000}
+                    max={40000}
+                    step={500}
+                    value={draft.generation.ragMaxContextChars ?? ""}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setDraft((d) => ({
+                        ...d,
+                        generation: {
+                          ...d.generation,
+                          ragMaxContextChars:
+                            raw === "" ? null : Math.max(2000, Math.min(40000, Number(raw) || 2000)),
+                        },
+                      }));
+                    }}
+                    placeholder={`Авто — до ${ragModelProfile.maxContextChars.toLocaleString("ru-RU")} (каталог модели)`}
+                  />
+                  <small className="assistants-hint">
+                    Ограничивает объём текста из базы знаний в промпте; не выше min(настройки баз,{" "}
+                    {ragModelProfile.maxContextChars.toLocaleString("ru-RU")} для текущей модели
+                    {modelForProfileHint ? ` «${modelForProfileHint}»` : ""}). Пусто — без дополнительного сужения.
+                  </small>
                 </label>
 
                 <label>
