@@ -767,6 +767,10 @@ export async function buildAssistantReply(input: {
   }
   const { agent } = linked;
   let assistant = linked.assistant;
+  // Агент сам по себе не должен ходить в базу знаний: это право только у ассистента
+  // (или у агента уже после handoff на конкретного ассистента). Пока диалог идёт
+  // через "proxy"-ассистента агента — RAG отключён.
+  let handoffActive = false;
 
   if (input.dialogId) {
     const dialogForRouting = await prisma.dialog.findFirst({
@@ -783,6 +787,7 @@ export async function buildAssistantReply(input: {
       });
       if (overrideAssistant) {
         assistant = overrideAssistant;
+        handoffActive = true;
       }
     }
   }
@@ -817,7 +822,11 @@ export async function buildAssistantReply(input: {
   const modelProfile = resolveModelProfile(effectiveModelForBudget);
   const assistantOverridesEarly = extractGenerationOverrides(assistant.settingsJson);
 
-  const kbIds = assistant.knowledgeLinks.map((l: { knowledgeBaseId: string }) => l.knowledgeBaseId);
+  // Агент без handoff — никаких привязок к БЗ (архитектурное ограничение: агент
+  // может пользоваться знаниями только через делегирование ассистенту).
+  const kbIds = handoffActive
+    ? assistant.knowledgeLinks.map((l: { knowledgeBaseId: string }) => l.knowledgeBaseId)
+    : [];
   const kbResolved =
     kbIds.length > 0
       ? await resolveMaxContextCharsForBases(input.tenantId, kbIds)
