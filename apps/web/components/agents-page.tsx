@@ -3,6 +3,14 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { CitationText, CitationsList, type ChatCitation } from "@/components/chat-citations";
 
+function safeJsonParse(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 type IntegrationOption = {
   id: string;
   provider: string;
@@ -288,13 +296,14 @@ export function AgentsPageClient() {
       return dialogId;
     }
     const response = await fetch(`/api/agents/${agentId}/chat/sessions`, { method: "POST" });
-    const body = (await response.json()) as {
-      ok: boolean;
-      data?: { dialog?: { id: string } };
-      error?: { message?: string };
-    };
-    if (!response.ok || !body.ok || !body.data?.dialog?.id) {
-      throw new Error(body.error?.message ?? "Не удалось создать чат-сессию");
+    const raw = await response.text();
+    const body = (raw ? safeJsonParse(raw) : null) as
+      | { ok: boolean; data?: { dialog?: { id: string } }; error?: { message?: string } }
+      | null;
+    if (!response.ok || !body?.ok || !body.data?.dialog?.id) {
+      throw new Error(
+        body?.error?.message ?? `Не удалось создать чат-сессию (HTTP ${response.status})`,
+      );
     }
     const newDialogId = body.data.dialog.id;
     const now = new Date().toISOString();
@@ -306,14 +315,15 @@ export function AgentsPageClient() {
   async function loadSessions(agentId: string, preferredDialogId?: string) {
     setSessionsLoading(true);
     const response = await fetch(`/api/agents/${agentId}/chat/sessions`);
-    const body = (await response.json()) as {
-      ok: boolean;
-      data?: { sessions?: ChatSession[] };
-      error?: { message?: string };
-    };
-    if (!response.ok || !body.ok) {
+    const raw = await response.text();
+    const body = (raw ? safeJsonParse(raw) : null) as
+      | { ok: boolean; data?: { sessions?: ChatSession[] }; error?: { message?: string } }
+      | null;
+    if (!response.ok || !body?.ok) {
       setSessionsLoading(false);
-      setChatError(body.error?.message ?? "Не удалось загрузить сессии чата");
+      setChatError(
+        body?.error?.message ?? `Не удалось загрузить сессии чата (HTTP ${response.status})`,
+      );
       return;
     }
     const sessions = body.data?.sessions ?? [];
@@ -332,13 +342,16 @@ export function AgentsPageClient() {
   async function createSession(agentId: string) {
     setChatError(null);
     const response = await fetch(`/api/agents/${agentId}/chat/sessions`, { method: "POST" });
-    const body = (await response.json()) as {
+    const rawCreate = await response.text();
+    const body = (rawCreate ? safeJsonParse(rawCreate) : { ok: false }) as {
       ok: boolean;
       data?: { dialog?: { id: string } };
       error?: { message?: string };
     };
-    if (!response.ok || !body.ok || !body.data?.dialog?.id) {
-      setChatError(body.error?.message ?? "Не удалось создать чат-сессию");
+    if (!response.ok || !body?.ok || !body.data?.dialog?.id) {
+      setChatError(
+        body?.error?.message ?? `Не удалось создать чат-сессию (HTTP ${response.status})`,
+      );
       return;
     }
     await loadSessions(agentId, body.data.dialog.id);
