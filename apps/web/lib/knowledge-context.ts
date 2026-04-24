@@ -289,7 +289,7 @@ export async function buildKnowledgeContextForBases(
             ki.id AS "knowledgeItemId",
             ki."sourceType"::text AS "sourceType",
             ki."sourceUrl" AS "sourceUrl",
-            (c.embedding <=> ${Prisma.raw(`${lit}::vector`)}) AS dist
+            (c.embedding <=> ${lit}::vector) AS dist
           FROM "Chunk" c
           INNER JOIN "Document" d ON d.id = c."documentId"
           INNER JOIN "KnowledgeItem" ki ON ki.id = d."knowledgeItemId"
@@ -593,7 +593,7 @@ export async function searchKnowledgeForTool(
             ki.id AS "knowledgeItemId",
             ki."sourceType"::text AS "sourceType",
             ki."sourceUrl" AS "sourceUrl",
-            (c.embedding <=> ${Prisma.raw(`${lit}::vector`)}) AS dist
+            (c.embedding <=> ${lit}::vector) AS dist
           FROM "Chunk" c
           INNER JOIN "Document" d ON d.id = c."documentId"
           INNER JOIN "KnowledgeItem" ki ON ki.id = d."knowledgeItemId"

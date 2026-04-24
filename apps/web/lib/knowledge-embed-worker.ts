@@ -164,8 +164,11 @@ export async function runEmbeddingJobsBatch(maxJobs = 4) {
           }
           const lit = vectorLiteralForSql(vec);
           const chunkId = slice[j]!.id;
+          // pgvector принимает текстовый литерал `[1,2,3]` → кастуем к vector.
+          // Передаём как параметр (а не через Prisma.raw), чтобы избежать
+          // SQL-синтаксической ошибки на необрамлённой квадратной скобке.
           await prisma.$executeRaw(Prisma.sql`
-            UPDATE "Chunk" SET embedding = ${Prisma.raw(`${lit}::vector`)} WHERE id = ${chunkId}
+            UPDATE "Chunk" SET embedding = ${lit}::vector WHERE id = ${chunkId}
           `);
         }
       }
